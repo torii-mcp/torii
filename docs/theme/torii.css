@@ -1,0 +1,29 @@
+:root {
+  --torii-red: #e54b4b;
+  --torii-gold: #f4b942;
+}
+
+.menu-title {
+  font-weight: 750;
+  letter-spacing: 0.015em;
+}
+
+.content main h1,
+.content main h2 {
+  text-wrap: balance;
+}
+
+.content main h1 {
+  border-bottom: 2px solid color-mix(in srgb, var(--torii-red) 65%, transparent);
+  padding-bottom: 0.35rem;
+}
+
+.content main blockquote {
+  border-left-color: var(--torii-gold);
+  background: color-mix(in srgb, var(--torii-gold) 8%, transparent);
+}
+
+.content main code {
+  font-variant-ligatures: none;
+}
+

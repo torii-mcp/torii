@@ -1,0 +1,7 @@
+/target/
+/docs/book/
+/.idea/
+/.vscode/
+*.log
+credentials.env
+.session-cache

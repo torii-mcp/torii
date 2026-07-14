@@ -1,0 +1,21 @@
+version: "1"
+name: kubectl
+tool: kubectl
+description: Executa kubectl em um target Kubernetes controlado pelo Torii.
+command: kubectl
+args_prefix: []
+
+targeting:
+  mode: kubectl_context
+
+policy:
+  minimum_accept_tokens: 1
+  grant_rule:
+    mode: exact
+
+auth:
+  strategy: inherited
+  cache_ttl_seconds: 300
+
+environment:
+  file: .env

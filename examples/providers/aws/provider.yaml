@@ -1,0 +1,42 @@
+version: "1"
+name: aws
+tool: aws
+description: Executa AWS CLI através do Torii.
+command: aws
+args_prefix: []
+
+policy:
+  minimum_accept_tokens: 2
+  grant_rule:
+    mode: first_tokens
+    count: 2
+
+auth:
+  strategy: environment
+  fields:
+    - name: AWS_ACCESS_KEY_ID
+      label: Access key ID
+      secret: false
+      required: true
+    - name: AWS_SECRET_ACCESS_KEY
+      label: Secret access key
+      secret: true
+      required: true
+    - name: AWS_SESSION_TOKEN
+      label: Session token
+      secret: true
+      required: true
+      multiline: true
+  inject:
+    environment:
+      AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID}"
+      AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY}"
+      AWS_SESSION_TOKEN: "${AWS_SESSION_TOKEN}"
+  validate:
+    command: aws
+    args: [sts, get-caller-identity]
+  cache_ttl_seconds: 300
+
+environment:
+  file: .env
+

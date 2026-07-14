@@ -1,0 +1,14 @@
+version: "1.0"
+deny:
+  - "exec"
+  - "attach"
+  - "port-forward"
+  - "proxy"
+  - "config"
+  - "delete namespace"
+accept:
+  - "get pods"
+  - "get deployments"
+  - "describe pod"
+  - "logs"
+  - "rollout status"

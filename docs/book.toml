@@ -1,0 +1,26 @@
+[book]
+title = "Torii — Documentação oficial"
+authors = ["Torii contributors"]
+description = "Fronteira MCP local de execução controlada para agentes"
+language = "pt-BR"
+src = "src"
+
+[rust]
+edition = "2021"
+
+[build]
+build-dir = "book"
+create-missing = false
+use-default-preprocessors = true
+
+[output.html]
+default-theme = "navy"
+preferred-dark-theme = "navy"
+additional-css = ["theme/torii.css"]
+fold.enable = true
+fold.level = 1
+
+[output.html.search]
+enable = true
+limit-results = 30
+use-boolean-and = true

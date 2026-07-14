@@ -1,0 +1,12 @@
+version: "1"
+name: kubectl
+package_version: "0.1.0"
+description: kubectl target-aware com setups de política por cluster.
+provider: provider.yaml
+rules: rules.yaml
+environment: env.example
+setups:
+  - name: readonly
+    kind: readonly
+    description: Observação de workloads sem operações interativas ou destrutivas.
+    rules: setups/readonly/rules.yaml

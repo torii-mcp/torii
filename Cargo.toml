@@ -1,0 +1,26 @@
+[package]
+name = "torii"
+version = "0.1.0"
+edition = "2021"
+description = "Controlled MCP execution boundary for infrastructure agents"
+license = "MIT"
+
+[dependencies]
+dirs = "5"
+eframe = "0.29"
+arboard = "3"
+flate2 = "1"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+rmcp = { version = "2.2.0", features = ["server", "transport-io"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+sha2 = "0.10"
+tar = "0.4"
+tempfile = "3"
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "process", "rt-multi-thread", "sync"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+assert_matches = "1"
