@@ -3,7 +3,7 @@ name = "torii"
 version = "0.1.0"
 edition = "2021"
 description = "Controlled MCP execution boundary for infrastructure agents"
-license = "MIT"
+license = "AGPL-3.0-only"
 
 [dependencies]
 dirs = "5"

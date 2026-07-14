@@ -122,3 +122,7 @@ mdbook build docs
 ```
 
 No Windows GNU, `eframe` precisa de uma instalação MinGW-w64 completa (`dlltool` e `as.exe`) no `PATH`, como no AWS Gate de referência.
+
+## Licença
+
+Torii é distribuído exclusivamente sob a [GNU Affero General Public License v3.0](LICENSE), identificador SPDX `AGPL-3.0-only`.
