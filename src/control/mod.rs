@@ -36,7 +36,5 @@ pub async fn ask_auth(
 }
 
 pub fn gui_disabled() -> bool {
-    ["TORII_NO_GUI", "AWSGATE_NO_GUI"]
-        .iter()
-        .any(|name| std::env::var_os(name).is_some_and(|v| !v.is_empty() && v != "0"))
+    std::env::var_os("TORII_NO_GUI").is_some_and(|value| !value.is_empty() && value != "0")
 }

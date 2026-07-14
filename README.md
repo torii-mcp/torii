@@ -77,6 +77,15 @@ Para cadastrar outro cluster Kubernetes usando um context já existente no kubec
 cargo run -- target add kubectl cliente_hml --context eks-cliente-hml
 ```
 
+Para registrar o Torii no Codex, Claude Code, Gemini CLI ou Cursor e habilitar o bloqueio opcional de chamadas diretas aos executáveis dos providers:
+
+```powershell
+torii agent install <codex|claude|gemini|cursor> --hook
+torii agent status codex
+```
+
+Reinicie o cliente após instalar ou remover a integração. O hook consulta o registry atual em cada chamada: providers instalados depois entram automaticamente na proteção. Ele reduz bypass acidental, mas não substitui sandbox do sistema operacional nem isolamento real de credenciais.
+
 Ao executar `torii` sem subcomandos, ele fala MCP em stdout. Logs e diagnósticos ficam fora do transporte; nunca escreva mensagens normais no stdout do servidor.
 
 Configuração típica do cliente MCP:
@@ -94,7 +103,7 @@ Configuração típica do cliente MCP:
 }
 ```
 
-Use `TORII_NO_GUI=1` em CI/headless. Nesse modo, chamadas não resolvidas são negadas e autenticação que exija coleta é cancelada com segurança. `AWSGATE_CONFIG_DIR` e `AWSGATE_NO_GUI` são aceitas temporariamente como fallback de migração.
+Use `TORII_NO_GUI=1` em CI/headless. Nesse modo, chamadas não resolvidas são negadas e autenticação que exija coleta é cancelada com segurança. O Torii não usa configuração nem variáveis de ambiente do AWS Gate como fallback.
 
 ## Provider
 

@@ -61,4 +61,4 @@ Para desenvolvimento ou testes, isole a configuração:
 $env:TORII_CONFIG_DIR = "$PWD/.torii-dev"
 ```
 
-`AWSGATE_CONFIG_DIR` ainda funciona como alias temporário quando `TORII_CONFIG_DIR` não está definido. Prefira sempre o nome novo.
+O Torii não lê `AWSGATE_CONFIG_DIR` e não migra configuração do AWS Gate automaticamente.

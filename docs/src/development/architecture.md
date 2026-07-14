@@ -6,6 +6,8 @@ O entrypoint `src/main.rs` delega a `app`, que separa prompt interno, control pl
 src/
 ├── app.rs                  startup e CLI de controle
 ├── targets.rs              control plane de targets
+├── agents/codex.rs         integração Codex e guard compartilhado de shell
+├── agents/portable.rs      adapters JSON de Claude, Gemini e Cursor
 ├── mcp/server.rs           protocolo e tools dinâmicas
 ├── core/invoke.rs          orquestração de uma chamada
 ├── jasper/                 regras e grants
@@ -40,3 +42,4 @@ O servidor usa stdout para MCP, então prompts são abertos por uma nova execuç
 - campo público de provider: `providers/config.rs`, registry, exemplos e docs;
 - mudança MCP: `mcp/server.rs` e `reference/mcp-api.md`;
 - novo controle humano: `app.rs`/`targets.rs`/`control/`, nunca como tool de agente.
+- mudança em integração de agente: `agents/`, `guides/agents.md` e `reference/cli.md`.

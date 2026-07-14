@@ -50,7 +50,7 @@ impl ServerHandler for ToriiServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(rmcp::model::Implementation::new("torii", env!("CARGO_PKG_VERSION")))
-            .with_instructions("Execute provider CLIs through Torii. Pass argv as an array of strings; policy is default-deny and explicit deny always wins.")
+            .with_instructions("Use Torii MCP tools for installed provider CLIs; never invoke those provider executables directly through a shell or try to bypass a denial. Pass argv as an array of strings. For target-aware tools, choose only a target announced by the schema. Policy is default-deny and explicit deny always wins.")
     }
 
     async fn list_tools(

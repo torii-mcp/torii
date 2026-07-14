@@ -10,20 +10,20 @@ pub fn run() -> Result<i32> {
     if args.first().map(String::as_str) == Some("__prompt") {
         return Ok(crate::control::gui::run_child());
     }
+    if let [command, agent, config_flag, config_dir] = args.as_slice() {
+        if command == "__agent-hook"
+            && matches!(agent.as_str(), "codex" | "claude" | "gemini" | "cursor")
+            && config_flag == "--config"
+        {
+            return crate::agents::codex::run_hook(&ConfigPaths::new(config_dir.into()), agent);
+        }
+    }
     let runtime = tokio::runtime::Runtime::new().map_err(|error| Error::Mcp(error.to_string()))?;
     runtime.block_on(run_async(args))
 }
 
 async fn run_async(args: Vec<String>) -> Result<i32> {
     let paths = ConfigPaths::discover()?;
-    let using_default_config = std::env::var_os("TORII_CONFIG_DIR").is_none()
-        && std::env::var_os("AWSGATE_CONFIG_DIR").is_none();
-    if using_default_config && paths.migrate_awsgate()? {
-        eprintln!(
-            "Migrated AWS Gate configuration to {}. The migrated session will be validated before use.",
-            paths.provider("aws").base().display()
-        );
-    }
     match args.as_slice() {
         [] => {
             let registry = ProviderRegistry::load(&paths)?;
@@ -36,6 +36,75 @@ async fn run_async(args: Vec<String>) -> Result<i32> {
         }
         [command] if command == "init" => init(&paths),
         [command] if command == "config-dir" => { println!("{}", paths.base().display()); Ok(0) }
+        [command, subcommand] if command == "agent" && subcommand == "list" => {
+            println!("codex\tMCP and optional PreToolUse hook");
+            println!("claude\tMCP and optional PreToolUse hook");
+            println!("gemini\tMCP and optional BeforeTool hook");
+            println!("cursor\tMCP and optional beforeShellExecution hook");
+            Ok(0)
+        }
+        [command, subcommand, agent] if command == "agent" && subcommand == "install" && agent == "codex" => {
+            crate::agents::codex::install(&paths, false)?;
+            Ok(0)
+        }
+        [command, subcommand, agent, hook] if command == "agent" && subcommand == "install" && agent == "codex" && hook == "--hook" => {
+            crate::agents::codex::install(&paths, true)?;
+            Ok(0)
+        }
+        [command, subcommand, agent] if command == "agent" && subcommand == "status" && agent == "codex" => {
+            crate::agents::codex::print_status(&paths)?;
+            Ok(0)
+        }
+        [command, subcommand, agent] if command == "agent" && subcommand == "uninstall" && agent == "codex" => {
+            crate::agents::codex::uninstall(&paths, false)?;
+            Ok(0)
+        }
+        [command, subcommand, agent, hook] if command == "agent" && subcommand == "uninstall" && agent == "codex" && hook == "--hook" => {
+            crate::agents::codex::uninstall(&paths, true)?;
+            Ok(0)
+        }
+        [command, subcommand, agent]
+            if command == "agent"
+                && subcommand == "install"
+                && matches!(agent.as_str(), "claude" | "gemini" | "cursor") =>
+        {
+            crate::agents::portable::install(&paths, agent, false)?;
+            Ok(0)
+        }
+        [command, subcommand, agent, hook]
+            if command == "agent"
+                && subcommand == "install"
+                && matches!(agent.as_str(), "claude" | "gemini" | "cursor")
+                && hook == "--hook" =>
+        {
+            crate::agents::portable::install(&paths, agent, true)?;
+            Ok(0)
+        }
+        [command, subcommand, agent]
+            if command == "agent"
+                && subcommand == "status"
+                && matches!(agent.as_str(), "claude" | "gemini" | "cursor") =>
+        {
+            crate::agents::portable::print_status(&paths, agent)?;
+            Ok(0)
+        }
+        [command, subcommand, agent]
+            if command == "agent"
+                && subcommand == "uninstall"
+                && matches!(agent.as_str(), "claude" | "gemini" | "cursor") =>
+        {
+            crate::agents::portable::uninstall(&paths, agent, false)?;
+            Ok(0)
+        }
+        [command, subcommand, agent, hook]
+            if command == "agent"
+                && subcommand == "uninstall"
+                && matches!(agent.as_str(), "claude" | "gemini" | "cursor")
+                && hook == "--hook" =>
+        {
+            crate::agents::portable::uninstall(&paths, agent, true)?;
+            Ok(0)
+        }
         [command, subcommand] if command == "provider" && subcommand == "list" => {
             let registry = ProviderRegistry::load(&paths)?;
             for provider in registry.providers() {
@@ -107,7 +176,7 @@ async fn run_async(args: Vec<String>) -> Result<i32> {
             eprintln!("Target {name:?} removed from provider tool {tool:?}.");
             Ok(0)
         }
-        _ => Err(Error::InvalidArguments("usage: torii | torii init | torii reauth <provider-tool> [target] | torii provider list | torii provider search [query] | torii provider install <name|directory|archive|https-url> | torii provider setup <provider> <setup> | torii provider update <provider> | torii target add <provider-tool> <name> --context <kubectl-context> | torii target list <provider-tool> | torii target show <provider-tool> <name> | torii target remove <provider-tool> <name> --force | torii config-dir".into())),
+        _ => Err(Error::InvalidArguments("usage: torii | torii init | torii reauth <provider-tool> [target] | torii provider list | torii provider search [query] | torii provider install <name|directory|archive|https-url> | torii provider setup <provider> <setup> | torii provider update <provider> | torii target add <provider-tool> <name> --context <kubectl-context> | torii target list <provider-tool> | torii target show <provider-tool> <name> | torii target remove <provider-tool> <name> --force | torii agent list | torii agent install <codex|claude|gemini|cursor> [--hook] | torii agent status <codex|claude|gemini|cursor> | torii agent uninstall <codex|claude|gemini|cursor> [--hook] | torii config-dir".into())),
     }
 }
 

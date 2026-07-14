@@ -23,6 +23,7 @@
 - [Configurar AWS](guides/aws.md)
 - [Configurar Kubernetes](guides/kubernetes.md)
 - [Operar e reautenticar](guides/control-plane.md)
+- [Integrar agentes e instalar o hook](guides/agents.md)
 
 # Referência
 

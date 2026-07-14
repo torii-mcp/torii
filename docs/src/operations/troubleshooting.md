@@ -10,7 +10,7 @@ O provider existe, mas não possui `rules.yaml`. Crie uma política explícita; 
 
 ## Chamada não resolvida é negada sem janela
 
-Verifique `TORII_NO_GUI` e `AWSGATE_NO_GUI`. Qualquer valor não vazio diferente de `0` desabilita GUI. Em headless, default deny é o comportamento esperado.
+Verifique `TORII_NO_GUI`. Qualquer valor não vazio diferente de `0` desabilita GUI. Em headless, default deny é o comportamento esperado. Variáveis do AWS Gate não alteram o Torii.
 
 ## Sessão AWS não renova
 

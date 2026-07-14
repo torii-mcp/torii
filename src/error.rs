@@ -55,6 +55,8 @@ pub enum Error {
     Prompt(String),
     #[error("provider package error: {0}")]
     Package(String),
+    #[error("agent integration error: {0}")]
+    Agent(String),
 }
 
 impl Error {

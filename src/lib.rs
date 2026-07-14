@@ -1,3 +1,4 @@
+pub mod agents;
 pub mod app;
 pub mod audit;
 pub mod config;
