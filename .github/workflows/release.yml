@@ -29,7 +29,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
@@ -70,7 +70,7 @@ jobs:
           "$hash  $package.zip" | Set-Content "dist/$package.zip.sha256" -Encoding ascii
 
       - name: Upload packaged binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: torii-${{ matrix.platform }}
           path: |
@@ -86,7 +86,7 @@ jobs:
 
     steps:
       - name: Download packaged binaries
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           path: dist
           merge-multiple: true
