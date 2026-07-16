@@ -26,10 +26,10 @@ Kubernetes usa uma tool única `kubectl` e vários aliases:
 
 ```text
 providers/kubectl/targets/
-├── mpce_dev/target.yaml
-└── cliente_hml/target.yaml
+├── lab/target.yaml
+└── lab_alt/target.yaml
 ```
 
-Cada `target.yaml` associa o alias a um context. O registry publica os aliases no schema MCP e exige `target` na chamada. O executor injeta `--context <configurado>` antes de `args` e rejeita flags de override enviadas pelo agente.
+Cada `target.yaml` associa o alias a um context e indica o provider cujo lifecycle será herdado. O registry publica os aliases no schema MCP e exige `target` na chamada. O executor injeta `--context <configurado>` antes de `args` e rejeita flags de override enviadas pelo agente.
 
-O provider compartilha executável, schema de auth e política por padrão. Cada target isola grants, cache, credenciais e lock; pode ainda substituir regras e variáveis persistentes localmente.
+O provider alvo compartilha executável e política por padrão. Cada target isola grants e pode substituir regras e variáveis persistentes localmente. Cache, credenciais e lock de autenticação pertencem ao provider indicado pelo campo `provider`.

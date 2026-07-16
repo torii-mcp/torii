@@ -19,7 +19,6 @@ pub struct Provider {
 pub struct Target {
     pub config: TargetConfig,
     pub paths: TargetPaths,
-    pub auth_lock: Arc<Mutex<()>>,
 }
 
 impl Provider {
@@ -91,6 +90,7 @@ impl ProviderRegistry {
                 return Err(Error::DuplicateTool(tool));
             }
         }
+        validate_target_providers(&by_tool)?;
         Ok(Self {
             by_tool: Arc::new(by_tool),
         })
@@ -157,7 +157,6 @@ fn load_targets(
         let value = Arc::new(Target {
             config: target,
             paths: target_paths,
-            auth_lock: Arc::new(Mutex::new(())),
         });
         if targets.insert(name.clone(), value).is_some() {
             return Err(Error::InvalidProvider {
@@ -308,6 +307,36 @@ fn validate_target(config: &TargetConfig, paths: &TargetPaths) -> Result<()> {
         return Err(fail(
             "context cannot be empty or contain line breaks".into(),
         ));
+    }
+    if !valid_tool_name(&config.provider) {
+        return Err(fail(format!(
+            "invalid target lifecycle provider tool {:?}",
+            config.provider
+        )));
+    }
+    Ok(())
+}
+
+fn validate_target_providers(providers: &BTreeMap<String, Arc<Provider>>) -> Result<()> {
+    for provider in providers.values() {
+        for target in provider.targets.values() {
+            let fail = |reason: String| Error::InvalidProvider {
+                provider: provider.config.name.clone(),
+                reason: format!("target {:?}: {reason}", target.config.name),
+            };
+            let lifecycle_provider = providers.get(&target.config.provider).ok_or_else(|| {
+                fail(format!(
+                    "target lifecycle provider tool {:?} is not installed; install the provider before using this target",
+                    target.config.provider
+                ))
+            })?;
+            if lifecycle_provider.uses_targets() {
+                return Err(fail(format!(
+                    "target lifecycle provider tool {:?} cannot require a target",
+                    target.config.provider
+                )));
+            }
+        }
     }
     Ok(())
 }

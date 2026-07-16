@@ -55,12 +55,12 @@ torii reauth aws
 torii reauth kubectl meu_dev
 ```
 
-Reauth aplica-se a autenticação gerenciada; `inherited` não possui material renovável pelo Torii.
+Reauth aplica-se a autenticação gerenciada; `inherited` não possui material renovável pelo Torii. O reauth do target delega ao lifecycle do provider indicado no próprio target.
 
 ## Targets
 
 ```powershell
-torii target add kubectl meu_dev --context eks-meu-dev
+torii target add kubectl meu_dev --context contexto-local --provider aws
 torii target list kubectl
 torii target show kubectl meu_dev
 torii target remove kubectl meu_dev --force

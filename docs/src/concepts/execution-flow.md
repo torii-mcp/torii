@@ -20,6 +20,14 @@ O provider é localizado e `rules.yaml` é carregado. Jasper verifica todos os d
 - `Allowed`: registra a regra compatível;
 - `Unresolved`: procura grant ativo e, se necessário, pede decisão humana.
 
+A janela de uma decisão `Unresolved` mostra os argumentos como tokens e cresce por estados: compacta para uma execução, intermediária para grant `exact` e expandida para edição de prefixo. A largura não muda; o redimensionamento preserva o centro atual da janela. Argumentos longos aparecem com começo, fim e tamanho, e seu conteúdo original pode ser revisado em páginas sem alterar o vetor usado no matcher ou na execução.
+
+Ao escolher uma permissão temporária, o Torii sugere uma fronteira antes do primeiro argumento iniciado por `-`, desde que existam pelo menos dois tokens anteriores. A sugestão é apenas estrutural, vem acompanhada do motivo e pode ser restaurada depois de uma edição; se a fronteira for precoce ou não existir, a invocação exata permanece selecionada. O operador ainda escolhe livremente `exact` ou qualquer prefixo válido.
+
+No editor, os tokens fixos e variáveis ficam em grupos rotulados e um marcador explícito lembra que qualquer prefixo aceita também argumentos futuros. Um resumo destacado acompanha o estado logo acima das ações. **Negar** mostra brevemente o resultado em coral; **Permitir** mostra em verde a autorização única ou sua duração antes de prosseguir. O botão de permissão permanece desabilitado até o operador confirmar que revisou invocação, target e escopo.
+
+Esse feedback visual não muda a ordem de segurança: deny explícito nunca abre a janela, e autenticação só começa depois que uma decisão não explícita foi permitida.
+
 ## 3. Ambiente e sessão
 
 Somente após `allow`, Torii lê o `.env` compartilhado e, quando houver, o `.env` do target. Em seguida, o lifecycle garante uma sessão válida no escopo.
@@ -45,4 +53,4 @@ Torii devolve provider, target quando aplicável, decisão e, quando houve execu
 
 ## Concorrência
 
-Chamadas em escopos diferentes podem validar sessões independentemente. Chamadas concorrentes do mesmo provider simples ou target compartilham o lock daquele escopo.
+Chamadas que herdam providers diferentes podem validar sessões independentemente. Chamadas concorrentes que usam o mesmo provider de lifecycle compartilham o lock desse provider.

@@ -25,15 +25,15 @@ src/
 
 ## Dependências entre camadas
 
-`mcp` chama `core`; `core` chama Jasper, sessão, control e runtime. Jasper permanece puro em relação a processo e autenticação. Runtime não decide política. Providers descrevem mecanismo, não operações permitidas.
+`mcp` chama `core`; `core` chama Jasper, sessão, control e runtime. Jasper permanece puro em relação a processo e autenticação. Runtime não decide política. Providers descrevem mecanismo, não operações permitidas. Depois de allow, um target pode delegar autenticação ao lifecycle de outro provider não target-aware; o ambiente retornado é composto somente para o processo filho alvo.
 
 ## GUI em subprocesso
 
-O servidor usa stdout para MCP, então prompts são abertos por uma nova execução do próprio binário com o subcomando interno `__prompt`. Pedido e resposta usam JSON pelos pipes privados. Credenciais retornam ao pai apenas para validação e persistência; stderr do prompt é suprimido.
+O servidor usa stdout para MCP, então prompts são abertos por uma nova execução do próprio binário com o subcomando interno `__prompt`. Pedido e resposta usam JSON pelos pipes privados. Durante autenticação, uma thread de background do subprocesso da GUI executa o validator sem bloquear o repaint; somente uma candidata validada retorna ao processo pai para persistência. Stderr do prompt é suprimido.
 
 ## Estado compartilhado
 
-`ProviderRegistry` guarda providers e targets em `Arc`, com mutex assíncrono por escopo. Settings, providers e targets são carregados no startup. Regras e grants são lidos durante chamadas.
+`ProviderRegistry` guarda providers e targets em `Arc`, com mutex assíncrono por provider. Settings, providers e targets são carregados no startup. O campo `provider` de cada target é validado depois que todo o registry é montado. Cache e lock continuam pertencendo ao provider cujo lifecycle o target herda; regras e grants são lidos durante chamadas.
 
 ## Onde adicionar comportamento
 

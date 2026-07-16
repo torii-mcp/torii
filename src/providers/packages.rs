@@ -1133,7 +1133,8 @@ mod tests {
         std::fs::write(
             &catalog_path,
             format!(
-                "version: '1'\nproviders:\n  - name: aws\n    version: '0.1.0'\n    description: Provider AWS\n    source: '{}'\n    sha256: {}\n",
+                "version: '1'\nproviders:\n  - name: aws\n    version: '{}'\n    description: Provider AWS\n    source: '{}'\n    sha256: {}\n",
+                loaded.manifest.package_version,
                 root.to_string_lossy().replace('\'', "''"),
                 loaded.digest
             ),

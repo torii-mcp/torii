@@ -1,0 +1,27 @@
+version: "1"
+name: aws-ui-one-field
+tool: aws
+description: Provider isolado para validar o layout com um campo.
+command: aws
+args_prefix: []
+
+policy:
+  minimum_accept_tokens: 2
+
+auth:
+  strategy: environment
+  fields:
+    - name: UI_VALUE
+      label: Value
+      secret: false
+      required: true
+  inject:
+    environment:
+      TORII_UI_VALUE: "${UI_VALUE}"
+  validate:
+    command: aws
+    args: [sts, get-caller-identity]
+  cache_ttl_seconds: 300
+
+environment:
+  file: .env

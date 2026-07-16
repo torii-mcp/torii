@@ -1,6 +1,6 @@
 version: "1"
 name: aws
-package_version: "0.1.0"
+package_version: "0.1.1"
 description: AWS CLI com autenticação temporária e setups operacionais curados.
 provider: provider.yaml
 rules: rules.yaml
@@ -8,5 +8,5 @@ environment: env.example
 setups:
   - name: readonly
     kind: readonly
-    description: Descoberta e leitura operacional comum, com denies para segredos e tokens.
+    description: Descoberta e leitura operacional comum, sem operações de escrita.
     rules: setups/readonly/rules.yaml

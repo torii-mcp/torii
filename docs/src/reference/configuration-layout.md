@@ -23,16 +23,14 @@ O diretório padrão é `~/.config/torii`. `TORII_CONFIG_DIR` substitui a raiz i
         ├── rules.yaml
         ├── .env
         └── targets/
-            └── mpce_dev/
+            └── lab/
                 ├── target.yaml
                 ├── rules.yaml
                 ├── .env
-                ├── grants
-                ├── .session-cache
-                └── auth/credentials.env
+                └── grants
 ```
 
-`.torii-package/` existe somente em instalações gerenciadas e contém origem, digest e setups. `rules.yaml` e `.env` ficam fora desse diretório porque pertencem ao operador. Rules do target é opcional e substitui o compartilhado; `.env` do target sobrepõe chaves compartilhadas.
+`.torii-package/` existe somente em instalações gerenciadas e contém origem, digest e setups. `rules.yaml` e `.env` ficam fora desse diretório porque pertencem ao operador. Rules do target é opcional e substitui o compartilhado; `.env` do target sobrepõe chaves compartilhadas. O target guarda somente política, grants e ambiente próprios. Cache, lock e credenciais pertencem ao provider indicado pelo target.
 
 ## `settings.yaml`
 
@@ -45,7 +43,7 @@ default_grant_minutes: 2
 
 ## Arquivos gerenciados
 
-- `grants`: epoch, tab e regra;
+- `grants`: arquivo YAML versão `2` com expiração e fingerprint do matcher; o formato legado de epoch, tab e regra não é reutilizado;
 - `.session-cache`: epoch da última validação;
 - `auth/credentials.env`: material sensível;
 - `torii.log`: auditoria append-only best-effort.

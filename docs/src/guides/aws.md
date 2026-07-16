@@ -19,9 +19,6 @@ command: aws
 
 policy:
   minimum_accept_tokens: 2
-  grant_rule:
-    mode: first_tokens
-    count: 2
 
 auth:
   strategy: environment
@@ -54,9 +51,8 @@ Evitar pager é importante porque stdin do processo filho é nulo.
 
 O pacote instala uma política vazia. A allowlist portada do AWS Gate só entra em vigor com `provider setup aws readonly`; ela inclui operações comuns de STS, EC2, Lambda, Step Functions, CloudWatch Logs, ECS, ECR, Secrets Manager, Glue, EKS e SSM. Operações que retornam valores de segredo, credenciais, tokens ou execução remota possuem `deny` explícito.
 
-Há exceções e riscos que precisam de revisão humana:
+Mesmo sem operações de escrita, há riscos que precisam de revisão humana:
 
-- `s3 cp` foi preservado por compatibilidade com o AWS Gate e pode escrever;
 - configurações Lambda podem conter variáveis sensíveis;
 - parâmetros SSM podem conter segredos dependendo da convenção da organização;
 - uma operação read-only ainda pode revelar dados confidenciais.

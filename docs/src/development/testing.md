@@ -12,7 +12,7 @@ mdbook build docs
 
 ## Testes existentes
 
-Testes unitários cobrem parsing de ambiente, matching, grants, pacotes em diretório/archive, setup, update preservando estado e truncamento UTF-8. `tests/security_flow.rs` prova que deny explícito e default deny headless encerram antes de ambiente, autenticação ou executável.
+Testes unitários cobrem parsing de ambiente, matching, grants, pacotes em diretório/archive, setup, update preservando estado e truncamento UTF-8. `tests/security_flow.rs` prova que deny explícito e default deny headless encerram antes de ambiente, autenticação ou executável. `tests/mcp_readonly_integration.rs` negocia MCP com um processo Torii real, executa uma operação local de leitura permitida e confirma que outra leitura explicitamente negada não inicia o provider.
 
 ## Regressões prioritárias
 
@@ -20,6 +20,8 @@ Toda mudança no fluxo deve preservar testes para:
 
 - deny vencendo accept;
 - `s3` não casando com `s3api`;
+- grant `exact` recusando argumento acrescentado, removido ou alterado;
+- grant `prefix` permitindo somente as variações após a fronteira escolhida;
 - credenciais não carregadas no caminho negado;
 - argumentos encaminhados sem shell;
 - exit code e streams preservados;

@@ -23,20 +23,27 @@ Accepts abaixo do mínimo são ignorados e registrados como `invalid-accept`. De
 
 ## Grants
 
-Uma chamada não resolvida pode receber permissão temporária. O provider escolhe como derivar a regra:
+Uma chamada não resolvida pode receber permissão temporária. O operador escolhe o escopo na janela de autorização:
 
-- `first_tokens`: usa os primeiros `count` itens;
-- `exact`: usa toda a chamada.
+- `exact`: exige o mesmo vetor de argumentos, inclusive tamanho e ordem;
+- `prefix`: exige somente os primeiros `N` argumentos escolhidos. Os argumentos posteriores podem mudar, desaparecer ou ser acrescentados.
 
-O arquivo `grants` contém uma entrada por linha:
+O Torii mostra os argumentos como tokens e explica literalmente o alcance antes da confirmação. O provider não infere verbo, recurso ou operação.
 
-```text
-1784000000	ec2 describe-instances
+O arquivo `grants` usa a versão `2` e guarda somente um fingerprint tokenizado do matcher, nunca uma linha de comando reconstruída:
+
+```yaml
+version: "2"
+entries:
+  - expires_at: 1784000000
+    matcher:
+      mode: prefix
+      token_count: 2
+      sha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 ```
 
-O primeiro campo é o epoch Unix de expiração. Entradas expiradas ou malformadas são ignoradas e grants nunca alteram `rules.yaml`.
+Entradas expiradas, malformadas ou de versão desconhecida não autorizam chamadas. O formato legado, que achata argumentos em texto, também é ignorado e exige nova aprovação. Grants nunca alteram `rules.yaml`.
 
 ## Decisão explicável
 
 Toda resposta identifica a origem: `rules`, `grant`, `human-once`, `human-grant`, `human-deny` ou `explicit-deny`. Isso permite ao agente compreender por que uma tentativa atravessou ou parou sem expor autenticação.
-

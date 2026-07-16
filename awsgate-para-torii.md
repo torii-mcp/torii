@@ -184,6 +184,8 @@ resultado MCP estruturado
 - declarar como sua sessão de autenticação é criada, aplicada e validada;
 - possuir diretório isolado de regras, grants, sessão e configuração.
 
+Todo target declara `provider` para indicar de qual provider instalado herda o lifecycle completo. O registry valida a referência no startup, mas ambiente, cache, credenciais e lifecycle só são acessados depois da autorização do Jasper. O provider indicado executa sua própria estratégia de autenticação, preflight, coleta ou renovação, e o Torii aplica o ambiente resultante somente ao processo filho do provider alvo.
+
 ---
 
 ## 5. Torii é MCP, não CLI operacional
@@ -347,9 +349,6 @@ args_prefix: []
 
 policy:
   minimum_accept_tokens: 2
-  grant_rule:
-    mode: first_tokens
-    count: 2
 
 auth:
   strategy: environment
@@ -407,8 +406,6 @@ args_prefix:
 
 policy:
   minimum_accept_tokens: 1
-  grant_rule:
-    mode: exact
 
 auth:
   strategy: inherited

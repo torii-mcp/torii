@@ -38,6 +38,7 @@ pub struct TargetConfig {
     pub version: String,
     pub name: String,
     pub context: String,
+    pub provider: String,
 }
 
 impl TargetingConfig {

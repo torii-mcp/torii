@@ -15,9 +15,8 @@ deny:
   - "glue get-connections"
 
 accept:
-  # S3: cp é a exceção de escrita herdada do AWS Gate.
+  # S3: somente listagem. Operações de cópia e alteração ficam não resolvidas.
   - "s3 ls"
-  - "s3 cp"
 
   - "sts get-caller-identity"
 

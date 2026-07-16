@@ -48,6 +48,10 @@ async fn ensure_inherited(
             reason: "inherited authentication cannot be renewed by Torii".into(),
         });
     }
+    if provider.config.auth.validate.is_none() {
+        audit::log(root, audit_scope, "session-unchecked", "-", "");
+        return Ok(Vec::new());
+    }
     if session_cached(provider, paths) {
         return Ok(Vec::new());
     }
@@ -93,32 +97,37 @@ async fn ensure_environment(
         "-",
         "",
     );
-    let mut validation_error = None;
-    loop {
-        let Some(fields) = control::ask_auth(
-            audit_scope,
-            &provider.config.auth.fields,
-            validation_error.as_deref(),
-        )
-        .await?
-        else {
-            return Err(Error::AuthCancelled(audit_scope.into()));
-        };
-        validate_required(provider, &fields)?;
-        let candidate =
-            exec::interpolate_environment(&provider.config.auth.inject.environment, &fields);
-        if validate(provider, persistent_env, &candidate).await? {
-            persist_credentials(provider, paths, &fields)?;
-            record_success(paths);
-            audit::log(root, audit_scope, "session-refreshed", "-", "");
-            return Ok(candidate);
-        }
+    let templates = provider.config.auth.inject.environment.clone();
+    let validation = control::AuthValidation {
+        command: provider
+            .config
+            .auth
+            .validate
+            .as_ref()
+            .map(|spec| spec.command.clone()),
+        args: provider
+            .config
+            .auth
+            .validate
+            .as_ref()
+            .map_or_else(Vec::new, |spec| spec.args.clone()),
+        persistent_env: persistent_env.to_vec(),
+        environment_templates: templates.clone(),
+    };
+    let prompt =
+        control::ask_auth(audit_scope, &provider.config.auth.fields, None, validation).await?;
+    for _ in 0..prompt.invalid_attempts {
         audit::log(root, audit_scope, "session-candidate-invalid", "-", "");
-        validation_error = Some(
-            "A sessão foi recusada pelo comando de validação. Revise os dados e tente novamente."
-                .to_string(),
-        );
     }
+    let Some(fields) = prompt.fields else {
+        return Err(Error::AuthCancelled(audit_scope.into()));
+    };
+    validate_required(provider, &fields)?;
+    let candidate = exec::interpolate_environment(&templates, &fields);
+    persist_credentials(provider, paths, &fields)?;
+    record_success(paths);
+    audit::log(root, audit_scope, "session-refreshed", "-", "");
+    Ok(candidate)
 }
 
 fn load_auth_env(provider: &Provider, paths: &AuthPaths) -> Result<Vec<(String, String)>> {

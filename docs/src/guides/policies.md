@@ -38,7 +38,11 @@ O segundo formato não casa com `get pods` e será não resolvido.
 
 ## Escolha grants conscientemente
 
-`first_tokens` é útil quando serviço e ação identificam bem a capacidade. `exact` reduz o alcance do grant, mas inclui todos os argumentos no arquivo de grants e na resposta de decisão. Não passe segredos em argumentos de CLI.
+Ao permitir temporariamente, escolha entre a invocação `exact` e um prefixo de argumentos. A interface pode sugerir um prefixo imediatamente antes do primeiro argumento iniciado por `-`, quando há pelo menos dois tokens anteriores. Essa é uma sugestão pelo formato do vetor, não a dedução de uma operação semântica; revise e mova a fronteira quando necessário.
+
+Um prefixo de `get pods`, por exemplo, permite chamadas futuras que comecem exatamente por esses dois tokens no mesmo target; argumentos posteriores podem mudar, desaparecer ou ser acrescentados. Mesmo quando todos os argumentos atuais estão fixos, um prefixo ainda permite acrescentar novos argumentos no futuro.
+
+Use o prefixo somente quando o conjunto autorizado estiver claro para o operador. A invocação exata exige o mesmo número, valores e ordem de argumentos. Não passe segredos em argumentos de CLI.
 
 ## Teste fronteiras
 

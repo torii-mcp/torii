@@ -176,11 +176,27 @@ targeting: { mode: kubectl_context }
 "#,
         )
         .unwrap();
+        let auth = paths.provider("auth");
+        auth.ensure().unwrap();
+        std::fs::write(
+            auth.config(),
+            r#"
+version: "1"
+name: auth
+tool: auth
+description: test authentication provider
+command: auth
+auth:
+  strategy: inherited
+  validate: { command: auth, args: [validate] }
+"#,
+        )
+        .unwrap();
         let target = provider.target("mpce_dev");
         target.ensure().unwrap();
         std::fs::write(
             target.config(),
-            "version: '1'\nname: mpce_dev\ncontext: eks-mpce-dev\n",
+            "version: '1'\nname: mpce_dev\ncontext: local-context\nprovider: auth\n",
         )
         .unwrap();
 

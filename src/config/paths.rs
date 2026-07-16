@@ -121,13 +121,8 @@ impl TargetPaths {
         self.base.join("grants")
     }
 
-    pub fn auth_paths(&self) -> AuthPaths {
-        AuthPaths::new(self.base.clone())
-    }
-
     pub fn ensure(&self) -> Result<()> {
-        create_dir(&self.base)?;
-        self.auth_paths().ensure()
+        create_dir(&self.base)
     }
 }
 

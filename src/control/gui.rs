@@ -1,13 +1,15 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::io::{Read, Write};
+use std::io::{BufReader, BufWriter, Write};
 use std::process::{Command, Stdio};
 use std::rc::Rc;
+use std::sync::mpsc;
+use std::time::{Duration, Instant};
 
 use eframe::egui;
 use serde::{Deserialize, Serialize};
 
-use super::AccessChoice;
+use super::{AccessChoice, AuthPromptResult, AuthValidation, GrantSelection};
 use crate::error::{Error, Result};
 use crate::providers::AuthField;
 
@@ -16,14 +18,14 @@ use crate::providers::AuthField;
 enum PromptRequest {
     Access {
         provider: String,
-        command: String,
-        rule: String,
+        args: Vec<String>,
         default_minutes: u32,
     },
     Auth {
         provider: String,
         fields: Vec<AuthField>,
         error: Option<String>,
+        validation: AuthValidation,
     },
 }
 
@@ -31,26 +33,24 @@ enum PromptRequest {
 #[serde(tag = "kind", content = "value", rename_all = "snake_case")]
 enum PromptResponse {
     Access(AccessChoice),
-    Auth(Option<HashMap<String, String>>),
+    Auth(AuthPromptResult),
     Error(String),
 }
 
 pub async fn ask_access(
     provider: &str,
-    command: &str,
-    rule: &str,
+    args: &[String],
     default_minutes: u32,
 ) -> Result<AccessChoice> {
     let request = PromptRequest::Access {
         provider: provider.into(),
-        command: command.into(),
-        rule: rule.into(),
+        args: args.to_vec(),
         default_minutes,
     };
     match invoke_child(request).await? {
         PromptResponse::Access(choice) => Ok(choice),
         PromptResponse::Error(message) => Err(Error::Prompt(message)),
-        _ => Err(Error::Prompt("unexpected access prompt response".into())),
+        PromptResponse::Auth(_) => Err(Error::Prompt("unexpected access prompt response".into())),
     }
 }
 
@@ -58,16 +58,18 @@ pub async fn ask_auth(
     provider: &str,
     fields: &[AuthField],
     error: Option<&str>,
-) -> Result<Option<HashMap<String, String>>> {
+    validation: AuthValidation,
+) -> Result<AuthPromptResult> {
     let request = PromptRequest::Auth {
         provider: provider.into(),
         fields: fields.to_vec(),
         error: error.map(str::to_owned),
+        validation,
     };
     match invoke_child(request).await? {
-        PromptResponse::Auth(fields) => Ok(fields),
+        PromptResponse::Auth(result) => Ok(result),
         PromptResponse::Error(message) => Err(Error::Prompt(message)),
-        _ => Err(Error::Prompt(
+        PromptResponse::Access(_) => Err(Error::Prompt(
             "unexpected authentication prompt response".into(),
         )),
     }
@@ -84,14 +86,17 @@ async fn invoke_child(request: PromptRequest) -> Result<PromptResponse> {
             .stderr(Stdio::null())
             .spawn()
             .map_err(|error| Error::Prompt(error.to_string()))?;
-        let payload =
-            serde_json::to_vec(&request).map_err(|error| Error::Prompt(error.to_string()))?;
-        child
+        let stdin = child
             .stdin
             .take()
-            .ok_or_else(|| Error::Prompt("prompt stdin unavailable".into()))?
-            .write_all(&payload)
+            .ok_or_else(|| Error::Prompt("prompt stdin unavailable".into()))?;
+        let mut writer = BufWriter::new(stdin);
+        serde_json::to_writer(&mut writer, &request)
             .map_err(|error| Error::Prompt(error.to_string()))?;
+        writer
+            .flush()
+            .map_err(|error| Error::Prompt(error.to_string()))?;
+        drop(writer);
         let output = child
             .wait_with_output()
             .map_err(|error| Error::Prompt(error.to_string()))?;
@@ -106,29 +111,44 @@ async fn invoke_child(request: PromptRequest) -> Result<PromptResponse> {
 }
 
 pub fn run_child() -> i32 {
-    let mut payload = String::new();
-    if std::io::stdin().read_to_string(&mut payload).is_err() {
-        return 1;
-    }
-    let response = match serde_json::from_str::<PromptRequest>(&payload) {
+    let stdin = std::io::stdin();
+    let request = serde_json::from_reader::<_, PromptRequest>(BufReader::new(stdin.lock()));
+    match request {
         Ok(PromptRequest::Access {
             provider,
-            command,
-            rule,
+            args,
             default_minutes,
-        }) => PromptResponse::Access(
-            access_window(provider, command, rule, default_minutes).unwrap_or(AccessChoice::Deny),
-        ),
+        }) => {
+            let response = PromptResponse::Access(
+                access_window(provider, args, default_minutes).unwrap_or(AccessChoice::Deny),
+            );
+            if serde_json::to_writer(std::io::stdout(), &response).is_ok() {
+                0
+            } else {
+                1
+            }
+        }
         Ok(PromptRequest::Auth {
             provider,
             fields,
             error,
-        }) => PromptResponse::Auth(auth_window(provider, fields, error).unwrap_or(None)),
-        Err(error) => PromptResponse::Error(error.to_string()),
-    };
-    match serde_json::to_writer(std::io::stdout(), &response) {
-        Ok(()) => 0,
-        Err(_) => 1,
+            validation,
+        }) => {
+            let response = PromptResponse::Auth(auth_window(provider, fields, error, validation));
+            if serde_json::to_writer(std::io::stdout(), &response).is_ok() {
+                0
+            } else {
+                1
+            }
+        }
+        Err(error) => {
+            let response = PromptResponse::Error(error.to_string());
+            if serde_json::to_writer(std::io::stdout(), &response).is_ok() {
+                0
+            } else {
+                1
+            }
+        }
     }
 }
 
@@ -137,6 +157,7 @@ fn native_options(width: f32, height: f32) -> eframe::NativeOptions {
         centered: true,
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([width, height])
+            .with_icon(prompt_icon())
             .with_resizable(false)
             .with_minimize_button(false)
             .with_maximize_button(false)
@@ -146,86 +167,793 @@ fn native_options(width: f32, height: f32) -> eframe::NativeOptions {
     }
 }
 
+fn prompt_icon() -> egui::IconData {
+    eframe::icon_data::from_png_bytes(include_bytes!("../../assets/torii-icon.png"))
+        .expect("embedded Torii icon must be a valid PNG")
+}
+
 fn close(ctx: &egui::Context) {
     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
     ctx.request_repaint();
 }
 
+fn display_token(value: &str, max_chars: usize) -> String {
+    let escaped = serde_json::to_string(value).unwrap_or_else(|_| "\"<invalid>\"".into());
+    if escaped.chars().count() <= max_chars {
+        escaped
+    } else {
+        let mut shortened = escaped
+            .chars()
+            .take(max_chars.saturating_sub(1))
+            .collect::<String>();
+        shortened.push('…');
+        shortened
+    }
+}
+
+const ACCESS_WIDTH: f32 = 820.0;
+const ACCESS_ONCE_HEIGHT: f32 = 360.0;
+const ACCESS_TIMED_EXACT_HEIGHT: f32 = 470.0;
+const ACCESS_TIMED_PREFIX_HEIGHT: f32 = 620.0;
+const ACCESS_DETAILS_EXTRA_HEIGHT: f32 = 90.0;
+const ACCESS_MAX_HEIGHT: f32 = 700.0;
+const TOKEN_COMPACT_CHARS: usize = 48;
+const TOKEN_TOOLTIP_CHARS: usize = 512;
+const TOKEN_DETAIL_PAGE_CHARS: usize = 4096;
+
+const FIXED_GROUP_BG: egui::Color32 = egui::Color32::from_rgb(22, 42, 48);
+const FIXED_PILL_BG: egui::Color32 = egui::Color32::from_rgb(32, 61, 74);
+const FIXED_STROKE: egui::Color32 = egui::Color32::from_rgb(86, 182, 194);
+const FIXED_TEXT: egui::Color32 = egui::Color32::from_rgb(229, 246, 248);
+const FREE_GROUP_BG: egui::Color32 = egui::Color32::from_rgb(32, 35, 42);
+const FREE_PILL_BG: egui::Color32 = egui::Color32::from_rgb(44, 49, 58);
+const FREE_STROKE: egui::Color32 = egui::Color32::from_rgb(92, 99, 112);
+const FREE_TEXT: egui::Color32 = egui::Color32::from_rgb(198, 203, 211);
+const BOUNDARY_ACCENT: egui::Color32 = egui::Color32::from_rgb(229, 192, 123);
+const SCOPE_SUMMARY_BG: egui::Color32 = egui::Color32::from_rgb(45, 40, 28);
+
+fn access_height(timed: bool, prefix: bool, details_open: bool) -> f32 {
+    let base = match (timed, prefix) {
+        (false, _) => ACCESS_ONCE_HEIGHT,
+        (true, false) => ACCESS_TIMED_EXACT_HEIGHT,
+        (true, true) => ACCESS_TIMED_PREFIX_HEIGHT,
+    };
+    if details_open {
+        (base + ACCESS_DETAILS_EXTRA_HEIGHT).min(ACCESS_MAX_HEIGHT)
+    } else {
+        base
+    }
+}
+
+fn suggested_prefix_len(args: &[String]) -> Option<usize> {
+    let boundary = args.iter().position(|argument| argument.starts_with('-'))?;
+    (boundary >= 2).then_some(boundary)
+}
+
+fn request_access_height(ctx: &egui::Context, height: f32) -> bool {
+    let geometry = ctx.input(|input| {
+        let viewport = input.viewport();
+        viewport
+            .inner_rect
+            .zip(viewport.outer_rect)
+            .map(|(inner, outer)| (inner.width(), inner.height(), outer.min))
+    });
+    let Some((width, current_height, outer_min)) = geometry else {
+        return false;
+    };
+    let position = centered_resize_position(current_height, outer_min, height);
+    ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(position));
+    ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(width, height)));
+    ctx.request_repaint();
+    true
+}
+
+fn centered_resize_position(
+    current_height: f32,
+    current_outer_min: egui::Pos2,
+    requested_height: f32,
+) -> egui::Pos2 {
+    egui::pos2(
+        current_outer_min.x,
+        current_outer_min.y - (requested_height - current_height) / 2.0,
+    )
+}
+
+fn format_byte_count(bytes: usize) -> String {
+    if bytes < 1024 {
+        format!("{bytes} B")
+    } else if bytes < 1024 * 1024 {
+        format!("{:.1} KiB", bytes as f64 / 1024.0)
+    } else {
+        format!("{:.1} MiB", bytes as f64 / (1024.0 * 1024.0))
+    }
+}
+
+fn escaped_fragment(value: &str) -> String {
+    let escaped = serde_json::to_string(value).unwrap_or_else(|_| "\"<invalid>\"".into());
+    escaped
+        .strip_prefix('"')
+        .and_then(|value| value.strip_suffix('"'))
+        .unwrap_or(&escaped)
+        .to_owned()
+}
+
+fn compact_token_label(value: &str, index: usize) -> String {
+    if value.chars().nth(TOKEN_COMPACT_CHARS).is_none() {
+        return display_token(value, usize::MAX);
+    }
+    let head = value.chars().take(24).collect::<String>();
+    let mut tail = value.chars().rev().take(16).collect::<Vec<_>>();
+    tail.reverse();
+    let tail = tail.into_iter().collect::<String>();
+    format!(
+        "#{} \"{}…{}\" · {}",
+        index + 1,
+        escaped_fragment(&head),
+        escaped_fragment(&tail),
+        format_byte_count(value.len())
+    )
+}
+
+fn bounded_token_preview(value: &str, max_chars: usize) -> String {
+    let preview = value.chars().take(max_chars).collect::<String>();
+    let truncated = preview.len() < value.len();
+    let mut escaped = serde_json::to_string(&preview).unwrap_or_else(|_| "\"<invalid>\"".into());
+    if truncated {
+        escaped.pop();
+        escaped.push('…');
+        escaped.push('"');
+    }
+    escaped
+}
+
+fn token_detail_page(value: &str, page: usize) -> String {
+    let start = page.saturating_mul(TOKEN_DETAIL_PAGE_CHARS);
+    let chunk = value
+        .chars()
+        .skip(start)
+        .take(TOKEN_DETAIL_PAGE_CHARS)
+        .collect::<String>();
+    serde_json::to_string(&chunk).unwrap_or_else(|_| "\"<invalid>\"".into())
+}
+
 struct AccessApp {
     provider: String,
-    command: String,
-    rule: String,
+    args: Vec<String>,
     aware: bool,
     timed: bool,
+    prefix: bool,
+    prefix_len: usize,
+    suggested_prefix_len: Option<usize>,
     minutes: u32,
+    arg_char_counts: Vec<usize>,
+    long_args: Vec<usize>,
+    details_arg: Option<usize>,
+    details_page: usize,
+    requested_height: f32,
+    pending_height: Option<f32>,
+    decision_since: Option<Instant>,
     outcome: Rc<RefCell<Option<AccessChoice>>>,
 }
 
 impl eframe::App for AccessApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.sync_window_height(ctx);
+        let decision = *self.outcome.borrow();
+        if let Some(decision_since) = self.decision_since {
+            let elapsed = decision_since.elapsed();
+            if elapsed >= PROMPT_TERMINAL_VISIBLE_FOR {
+                close(ctx);
+            } else {
+                ctx.request_repaint_after(PROMPT_TERMINAL_VISIBLE_FOR - elapsed);
+            }
+        }
+        let decided = decision.is_some();
+
+        egui::TopBottomPanel::bottom("access_status")
+            .resizable(false)
+            .exact_height(PROMPT_STATUS_BAR_HEIGHT)
+            .show_separator_line(false)
+            .frame(
+                egui::Frame::none()
+                    .fill(ctx.style().visuals.extreme_bg_color)
+                    .inner_margin(egui::Margin::symmetric(6.0, 0.0)),
+            )
+            .show(ctx, |ui| {
+                ui.with_layout(
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| match decision {
+                        Some(AccessChoice::Deny) => {
+                            ui.label(
+                                egui::RichText::new("Acesso negado.").color(PROMPT_ERROR_COLOR),
+                            );
+                        }
+                        Some(AccessChoice::AllowOnce) => {
+                            ui.label(
+                                egui::RichText::new("👍 Acesso autorizado uma vez.")
+                                    .color(PROMPT_SUCCESS_COLOR),
+                            );
+                        }
+                        Some(AccessChoice::AllowFor { minutes, .. }) => {
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "👍 Acesso autorizado por {minutes} min."
+                                ))
+                                .color(PROMPT_SUCCESS_COLOR),
+                            );
+                        }
+                        None if !self.aware => {
+                            ui.label("Revise a solicitação antes de decidir.");
+                        }
+                        None if self.timed => {
+                            ui.label(format!("Pronto para permitir por {} min.", self.minutes));
+                        }
+                        None => {
+                            ui.label("Pronto para permitir uma vez.");
+                        }
+                    },
+                );
+            });
+
+        egui::TopBottomPanel::bottom("access_actions")
+            .resizable(false)
+            .exact_height(28.0)
+            .show_separator_line(true)
+            .show(ctx, |ui| {
+                ui.allocate_ui_with_layout(
+                    ui.available_size(),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                        ui.add_enabled_ui(!decided, |ui| {
+                            ui.checkbox(
+                                &mut self.aware,
+                                "Revisei a invocação, o target e o escopo da permissão.",
+                            );
+                        });
+                        const ACTIONS_WIDTH: f32 = 205.0;
+                        ui.add_space((ui.available_width() - ACTIONS_WIDTH).max(0.0));
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(ACTIONS_WIDTH, ui.available_height()),
+                            egui::Layout::right_to_left(egui::Align::Center),
+                            |ui| {
+                                ui.add_enabled_ui(self.aware && !decided, |ui| {
+                                    let label = if self.timed {
+                                        format!("Permitir por {} min", self.minutes)
+                                    } else {
+                                        "Permitir uma vez".into()
+                                    };
+                                    if ui.button(label).clicked() {
+                                        self.finish_decision(
+                                            ctx,
+                                            if self.timed {
+                                                AccessChoice::AllowFor {
+                                                    minutes: self.minutes,
+                                                    selection: if self.prefix {
+                                                        GrantSelection::Prefix {
+                                                            token_count: self.prefix_len,
+                                                        }
+                                                    } else {
+                                                        GrantSelection::Exact
+                                                    },
+                                                }
+                                            } else {
+                                                AccessChoice::AllowOnce
+                                            },
+                                        );
+                                    }
+                                });
+                                ui.add_enabled_ui(!decided, |ui| {
+                                    if ui.button("Negar").clicked() {
+                                        self.finish_decision(ctx, AccessChoice::Deny);
+                                    }
+                                });
+                            },
+                        );
+                    },
+                );
+            });
+
+        egui::TopBottomPanel::bottom("access_scope_summary")
+            .resizable(false)
+            .exact_height(28.0)
+            .show_separator_line(false)
+            .frame(
+                egui::Frame::none()
+                    .fill(SCOPE_SUMMARY_BG)
+                    .inner_margin(egui::Margin::symmetric(8.0, 0.0)),
+            )
+            .show(ctx, |ui| {
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    ui.label(
+                        egui::RichText::new(self.scope_summary())
+                            .strong()
+                            .color(BOUNDARY_ACCENT),
+                    );
+                });
+            });
+
         egui::CentralPanel::default().show(ctx, |ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
             ui.heading(format!("Torii — autorização ({})", self.provider));
             ui.label("A ação não está resolvida pela política.");
+            ui.add_space(2.0);
             ui.separator();
-            ui.label("Comando:");
-            egui::ScrollArea::vertical()
-                .max_height(60.0)
-                .show(ui, |ui| {
-                    ui.monospace(&self.command);
-                });
             ui.horizontal(|ui| {
-                ui.label("Grant:");
-                ui.strong(egui::RichText::new(&self.rule).monospace());
+                ui.label(egui::RichText::new(format!(
+                    "Invocação solicitada · {} argumentos",
+                    self.args.len()
+                )));
+                if !self.long_args.is_empty() {
+                    const DETAILS_BUTTON_WIDTH: f32 = 210.0;
+                    ui.add_space((ui.available_width() - DETAILS_BUTTON_WIDTH).max(0.0));
+                    let label = if self.details_arg.is_some() {
+                        "Ocultar detalhes".into()
+                    } else if self.long_args.len() == 1 {
+                        "Revisar 1 argumento longo".into()
+                    } else {
+                        format!("Revisar {} argumentos longos", self.long_args.len())
+                    };
+                    if ui.button(label).clicked() {
+                        if self.details_arg.is_some() {
+                            self.details_arg = None;
+                        } else {
+                            self.details_arg = self.long_args.first().copied();
+                            self.details_page = 0;
+                        }
+                    }
+                }
             });
+            let editing_prefix = self.timed && self.prefix && !decided;
+            if editing_prefix {
+                ui.small("Os argumentos estão no editor de escopo temporário abaixo.");
+            } else {
+                egui::ScrollArea::vertical()
+                    .id_salt("access_arguments")
+                    .max_height(105.0)
+                    .min_scrolled_height(36.0)
+                    .auto_shrink([false, true])
+                    .scroll_bar_visibility(
+                        egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded,
+                    )
+                    .show(ui, |ui| {
+                        self.render_argument_strip(ui);
+                    });
+            }
+            if self.details_arg.is_some() {
+                self.render_argument_details(ui);
+            }
+            ui.add_space(2.0);
             ui.separator();
-            ui.checkbox(&mut self.aware, "Estou ciente dos riscos");
-            ui.add_enabled_ui(self.aware, |ui| {
+            ui.label(egui::RichText::new("Como autorizar?").strong());
+            let once_changed = ui.radio_value(&mut self.timed, false, "Uma vez").changed();
+            let temporary_changed = ui
+                .radio_value(&mut self.timed, true, "Temporariamente")
+                .changed();
+            if once_changed || temporary_changed {
+                self.aware = false;
+            }
+            if temporary_changed {
+                if let Some(suggested) = self.suggested_prefix_len {
+                    self.prefix = true;
+                    self.prefix_len = suggested;
+                } else {
+                    self.prefix = false;
+                    self.prefix_len = self.args.len();
+                }
+            }
+            if self.timed {
+                ui.group(|ui| {
+                    ui.set_min_width(ui.available_width());
+                    ui.label(egui::RichText::new("Escopo temporário").strong());
+                    let prefix_label = match self.suggested_prefix_len {
+                        Some(suggested) if self.prefix_len == suggested => {
+                            format!("Prefixo sugerido · {suggested} argumentos")
+                        }
+                        Some(_) => format!(
+                            "Prefixo personalizado · {} argumentos",
+                            self.prefix_len
+                        ),
+                        None => "Prefixo personalizado".into(),
+                    };
+                    let mut prefix_changed = false;
+                    if self.suggested_prefix_len.is_some() {
+                        prefix_changed = ui
+                            .radio_value(&mut self.prefix, true, &prefix_label)
+                            .changed();
+                    }
+                    let exact_changed = ui
+                        .radio_value(
+                            &mut self.prefix,
+                            false,
+                            "Somente esta invocação exata",
+                        )
+                        .changed();
+                    if self.suggested_prefix_len.is_none() {
+                        prefix_changed = ui
+                            .radio_value(&mut self.prefix, true, &prefix_label)
+                            .changed();
+                    }
+                    if prefix_changed {
+                        if let Some(suggested) = self.suggested_prefix_len {
+                            self.prefix_len = suggested;
+                        }
+                    }
+                    if exact_changed || prefix_changed {
+                        self.aware = false;
+                    }
+                    if self.prefix {
+                        if let Some(suggested) = self.suggested_prefix_len {
+                            if self.prefix_len == suggested {
+                                ui.small(format!(
+                                    "Sugestão pelo formato: fronteira antes de {}.",
+                                    bounded_token_preview(&self.args[suggested], 36)
+                                ));
+                            } else {
+                                ui.horizontal(|ui| {
+                                    ui.small(format!(
+                                        "Fronteira ajustada por você; a sugestão original era {suggested}."
+                                    ));
+                                    if ui.button("Restaurar sugestão").clicked() {
+                                        self.prefix_len = suggested;
+                                        self.aware = false;
+                                    }
+                                });
+                            }
+                        } else {
+                            ui.small(
+                                "Nenhuma fronteira estrutural foi encontrada; escolha o prefixo manualmente.",
+                            );
+                        }
+                        ui.label("Clique nas pílulas ou use os controles para mover a fronteira.");
+                        egui::ScrollArea::vertical()
+                            .id_salt("access_prefix_editor")
+                            .max_height(190.0)
+                            .min_scrolled_height(80.0)
+                            .auto_shrink([false, true])
+                            .scroll_bar_visibility(
+                                egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded,
+                            )
+                            .show(ui, |ui| self.render_prefix_editor(ui));
+                        ui.horizontal(|ui| {
+                            if ui
+                                .add_enabled(
+                                    self.prefix_len > 1,
+                                    egui::Button::new("◀").small(),
+                                )
+                                .clicked()
+                            {
+                                self.prefix_len -= 1;
+                                self.aware = false;
+                            }
+                            ui.label(format!(
+                                "{} de {} argumentos fixos",
+                                self.prefix_len,
+                                self.args.len()
+                            ));
+                            if ui
+                                .add_enabled(
+                                    self.prefix_len < self.args.len(),
+                                    egui::Button::new("▶").small(),
+                                )
+                                .clicked()
+                            {
+                                self.prefix_len += 1;
+                                self.aware = false;
+                            }
+                        });
+                        let fixed_long = self
+                            .long_args
+                            .iter()
+                            .filter(|index| **index < self.prefix_len)
+                            .count();
+                        let free_long = self.long_args.len().saturating_sub(fixed_long);
+                        if fixed_long > 0 || free_long > 0 {
+                            ui.small(format!(
+                                "Argumentos longos: {fixed_long} dentro do prefixo e {free_long} fora dele."
+                            ));
+                        }
+                    }
+                    ui.small("Denies explícitos continuam prevalecendo.");
+                });
                 ui.horizontal(|ui| {
-                    ui.checkbox(&mut self.timed, "Permitir por");
-                    ui.add(egui::DragValue::new(&mut self.minutes).range(1..=1440));
+                    ui.label("Duração:");
+                    if ui
+                        .add(egui::DragValue::new(&mut self.minutes).range(1..=1440))
+                        .changed()
+                    {
+                        self.aware = false;
+                    }
                     ui.label("minutos");
                 });
-            });
-            ui.separator();
-            ui.horizontal(|ui| {
-                if ui.button("Negar").clicked() {
-                    *self.outcome.borrow_mut() = Some(AccessChoice::Deny);
-                    close(ctx);
+            }
+        });
+    }
+}
+
+impl AccessApp {
+    fn scope_summary(&self) -> String {
+        match (self.timed, self.prefix) {
+            (false, _) => "Esta chamada será executada uma vez, sem salvar permissão temporária."
+                .into(),
+            (true, false) => {
+                "Todos os argumentos devem permanecer idênticos; qualquer diferença exige nova autorização."
+                    .into()
+            }
+            (true, true) => format!(
+                "Os primeiros {} de {} argumentos ficam fixos; o restante e novos argumentos podem variar.",
+                self.prefix_len, self.args.len()
+            ),
+        }
+    }
+
+    fn sync_window_height(&mut self, ctx: &egui::Context) {
+        let desired = access_height(self.timed, self.prefix, self.details_arg.is_some());
+        if self.requested_height != desired {
+            self.requested_height = desired;
+            self.pending_height = Some(desired);
+        }
+        if let Some(height) = self.pending_height {
+            if request_access_height(ctx, height) {
+                self.pending_height = None;
+            }
+        }
+    }
+
+    fn finish_decision(&mut self, ctx: &egui::Context, decision: AccessChoice) {
+        *self.outcome.borrow_mut() = Some(decision);
+        self.decision_since = Some(Instant::now());
+        ctx.request_repaint_after(PROMPT_TERMINAL_VISIBLE_FOR);
+    }
+
+    fn render_argument_strip(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal_wrapped(|ui| {
+            for index in 0..self.args.len() {
+                self.render_token(
+                    ui,
+                    index,
+                    ui.visuals().faint_bg_color,
+                    ui.visuals().widgets.inactive.bg_stroke,
+                    ui.visuals().text_color(),
+                    false,
+                );
+            }
+        });
+    }
+
+    fn render_prefix_editor(&mut self, ui: &mut egui::Ui) {
+        let fixed_frame = egui::Frame::group(ui.style())
+            .fill(FIXED_GROUP_BG)
+            .stroke(egui::Stroke::new(1.0, FIXED_STROKE))
+            .inner_margin(egui::Margin::same(8.0));
+        fixed_frame.show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            ui.label(
+                egui::RichText::new(format!("PERMANECEM IGUAIS · {}", self.prefix_len))
+                    .small()
+                    .strong()
+                    .color(FIXED_STROKE),
+            );
+            ui.horizontal_wrapped(|ui| {
+                for index in 0..self.prefix_len {
+                    self.render_token(
+                        ui,
+                        index,
+                        FIXED_PILL_BG,
+                        egui::Stroke::new(1.0, FIXED_STROKE),
+                        FIXED_TEXT,
+                        true,
+                    );
                 }
-                ui.add_enabled_ui(self.aware, |ui| {
-                    if ui.button("Permitir").clicked() {
-                        *self.outcome.borrow_mut() = Some(if self.timed {
-                            AccessChoice::AllowFor(self.minutes)
-                        } else {
-                            AccessChoice::AllowOnce
-                        });
-                        close(ctx);
-                    }
-                });
             });
+        });
+
+        ui.add_space(6.0);
+        let free_frame = egui::Frame::group(ui.style())
+            .fill(FREE_GROUP_BG)
+            .stroke(egui::Stroke::new(1.0, FREE_STROKE))
+            .inner_margin(egui::Margin::same(8.0));
+        free_frame.show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            ui.label(
+                egui::RichText::new(format!(
+                    "PODEM MUDAR OU DESAPARECER · {}",
+                    self.args.len().saturating_sub(self.prefix_len)
+                ))
+                .small()
+                .strong()
+                .color(FREE_TEXT),
+            );
+            ui.horizontal_wrapped(|ui| {
+                for index in self.prefix_len..self.args.len() {
+                    self.render_token(
+                        ui,
+                        index,
+                        FREE_PILL_BG,
+                        egui::Stroke::new(1.0, FREE_STROKE),
+                        FREE_TEXT,
+                        true,
+                    );
+                }
+                ui.add(
+                    egui::Button::new(
+                        egui::RichText::new("+ zero ou mais argumentos futuros")
+                            .small()
+                            .color(BOUNDARY_ACCENT),
+                    )
+                    .fill(FREE_GROUP_BG)
+                    .stroke(egui::Stroke::new(1.5, BOUNDARY_ACCENT))
+                    .sense(egui::Sense::hover()),
+                )
+                .on_hover_text(
+                    "Um grant por prefixo também aceita novos argumentos depois dos atuais.",
+                );
+            });
+        });
+    }
+
+    fn render_token(
+        &mut self,
+        ui: &mut egui::Ui,
+        index: usize,
+        fill: egui::Color32,
+        stroke: egui::Stroke,
+        text: egui::Color32,
+        selectable: bool,
+    ) {
+        let label = compact_token_label(&self.args[index], index);
+        let button = egui::Button::new(egui::RichText::new(label).monospace().color(text))
+            .fill(fill)
+            .stroke(stroke)
+            .sense(if selectable {
+                egui::Sense::click()
+            } else {
+                egui::Sense::hover()
+            });
+        let response = ui.add(button).on_hover_ui(|ui| {
+            ui.monospace(bounded_token_preview(
+                &self.args[index],
+                TOKEN_TOOLTIP_CHARS,
+            ));
+            if self.arg_char_counts[index] > TOKEN_TOOLTIP_CHARS {
+                ui.small(format!(
+                    "Argumento {} · {} · visualização abreviada",
+                    index + 1,
+                    format_byte_count(self.args[index].len())
+                ));
+            }
+        });
+        if selectable && response.clicked() {
+            self.prefix_len = index + 1;
+            self.aware = false;
+        }
+    }
+
+    fn render_argument_details(&mut self, ui: &mut egui::Ui) {
+        let Some(index) = self.details_arg else {
+            return;
+        };
+        let char_count = self.arg_char_counts[index];
+        let page_count = char_count.div_ceil(TOKEN_DETAIL_PAGE_CHARS).max(1);
+        self.details_page = self.details_page.min(page_count - 1);
+        let detail = token_detail_page(&self.args[index], self.details_page);
+        let long_position = self
+            .long_args
+            .iter()
+            .position(|candidate| *candidate == index)
+            .unwrap_or(0);
+
+        ui.group(|ui| {
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new(format!(
+                        "Argumento {} de {} · {}",
+                        index + 1,
+                        self.args.len(),
+                        format_byte_count(self.args[index].len())
+                    ))
+                    .strong(),
+                );
+                ui.with_layout(
+                    egui::Layout::right_to_left(egui::Align::Center),
+                    |ui| {
+                        if ui
+                            .add_enabled(
+                                long_position + 1 < self.long_args.len(),
+                                egui::Button::new("Próximo argumento"),
+                            )
+                            .clicked()
+                        {
+                            self.details_arg = Some(self.long_args[long_position + 1]);
+                            self.details_page = 0;
+                        }
+                        if ui
+                            .add_enabled(
+                                long_position > 0,
+                                egui::Button::new("Argumento anterior"),
+                            )
+                            .clicked()
+                        {
+                            self.details_arg = Some(self.long_args[long_position - 1]);
+                            self.details_page = 0;
+                        }
+                    },
+                );
+            });
+            egui::ScrollArea::vertical()
+                .id_salt("access_argument_details")
+                .max_height(88.0)
+                .show(ui, |ui| {
+                    ui.add(
+                        egui::Label::new(egui::RichText::new(detail).monospace()).wrap(),
+                    );
+                });
+            ui.horizontal(|ui| {
+                if ui
+                    .add_enabled(self.details_page > 0, egui::Button::new("◀ Página"))
+                    .clicked()
+                {
+                    self.details_page -= 1;
+                }
+                ui.label(format!(
+                    "Página {} de {} · até {} caracteres por página",
+                    self.details_page + 1,
+                    page_count,
+                    TOKEN_DETAIL_PAGE_CHARS
+                ));
+                if ui
+                    .add_enabled(
+                        self.details_page + 1 < page_count,
+                        egui::Button::new("Página ▶"),
+                    )
+                    .clicked()
+                {
+                    self.details_page += 1;
+                }
+            });
+            ui.small(
+                "A visualização é paginada; o matcher e a execução usam o argumento completo, sem truncamento.",
+            );
         });
     }
 }
 
 fn access_window(
     provider: String,
-    command: String,
-    rule: String,
+    args: Vec<String>,
     default_minutes: u32,
 ) -> std::result::Result<AccessChoice, String> {
+    let suggested_prefix_len = suggested_prefix_len(&args);
+    let arg_char_counts = args
+        .iter()
+        .map(|argument| argument.chars().count())
+        .collect::<Vec<_>>();
+    let long_args = arg_char_counts
+        .iter()
+        .enumerate()
+        .filter_map(|(index, count)| (*count > TOKEN_COMPACT_CHARS).then_some(index))
+        .collect::<Vec<_>>();
     let outcome = Rc::new(RefCell::new(None));
     let result = Rc::clone(&outcome);
     eframe::run_native(
         "Torii — autorização",
-        native_options(650.0, 310.0),
+        native_options(ACCESS_WIDTH, ACCESS_ONCE_HEIGHT),
         Box::new(move |_| {
             Ok(Box::new(AccessApp {
                 provider,
-                command,
-                rule,
+                prefix_len: args.len().max(1),
+                args,
                 aware: false,
                 timed: false,
+                prefix: false,
+                suggested_prefix_len,
                 minutes: default_minutes.max(1),
+                arg_char_counts,
+                long_args,
+                details_arg: None,
+                details_page: 0,
+                requested_height: ACCESS_ONCE_HEIGHT,
+                pending_height: None,
+                decision_since: None,
                 outcome: result,
             }))
         }),
@@ -240,112 +968,397 @@ struct AuthApp {
     fields: Vec<AuthField>,
     values: HashMap<String, String>,
     error: Option<String>,
+    pending: Option<mpsc::Receiver<(AuthValidationOutcome, HashMap<String, String>)>>,
+    success_since: Option<Instant>,
+    validation: AuthValidation,
+    form_height: f32,
     outcome: Rc<RefCell<Option<HashMap<String, String>>>>,
+    invalid_attempts: Rc<RefCell<u32>>,
 }
+
+enum AuthValidationOutcome {
+    Accepted,
+    Rejected,
+    Failed,
+}
+
+const AUTH_MULTILINE_INPUT_HEIGHT: f32 = 72.0;
+const PROMPT_ACTIONS_HEIGHT: f32 = 32.0;
+const PROMPT_STATUS_BAR_HEIGHT: f32 = 24.0;
+const PROMPT_ERROR_COLOR: egui::Color32 = egui::Color32::from_rgb(224, 108, 117);
+const PROMPT_SUCCESS_COLOR: egui::Color32 = egui::Color32::from_rgb(152, 195, 121);
+const PROMPT_TERMINAL_VISIBLE_FOR: Duration = Duration::from_millis(650);
 
 impl eframe::App for AuthApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.poll_validation(ctx);
+        let validating = self.pending.is_some();
+        let succeeded = self.success_since.is_some();
+        let busy = validating || succeeded;
+        if validating {
+            ctx.set_cursor_icon(egui::CursorIcon::Wait);
+        }
+
+        egui::TopBottomPanel::bottom("auth_status")
+            .resizable(false)
+            .exact_height(PROMPT_STATUS_BAR_HEIGHT)
+            .show_separator_line(false)
+            .frame(
+                egui::Frame::none()
+                    .fill(ctx.style().visuals.extreme_bg_color)
+                    .inner_margin(egui::Margin::symmetric(6.0, 0.0)),
+            )
+            .show(ctx, |ui| {
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    if validating {
+                        ui.add(egui::Spinner::new().size(16.0));
+                        ui.label("Validando sessão…");
+                    } else if succeeded {
+                        ui.label(
+                            egui::RichText::new("👍 Sessão validada.").color(PROMPT_SUCCESS_COLOR),
+                        );
+                    } else if let Some(error) = &self.error {
+                        ui.add(
+                            egui::Label::new(egui::RichText::new(error).color(PROMPT_ERROR_COLOR))
+                                .truncate(),
+                        )
+                        .on_hover_text(error);
+                    } else {
+                        ui.label("Pronto para validar.");
+                    }
+                });
+            });
+
+        egui::TopBottomPanel::bottom("auth_actions")
+            .resizable(false)
+            .exact_height(PROMPT_ACTIONS_HEIGHT)
+            .show_separator_line(true)
+            .show(ctx, |ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.add_enabled_ui(!busy, |ui| {
+                        if ui.button("Validar e usar").clicked() {
+                            self.start_validation(ctx);
+                        }
+                    });
+                    ui.add_enabled_ui(!succeeded, |ui| {
+                        if ui.button("Cancelar").clicked() {
+                            close(ctx);
+                        }
+                    });
+                });
+            });
+
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.heading(format!("Torii — autenticação ({})", self.provider));
             ui.label("A nova sessão só substituirá a anterior após validação.");
             ui.separator();
-            egui::ScrollArea::vertical()
-                .max_height(360.0)
-                .show(ui, |ui| {
-                    for field in &self.fields {
-                        let label = if field.label.is_empty() {
-                            &field.name
-                        } else {
-                            &field.label
-                        };
-                        ui.label(label);
-                        let value = self.values.entry(field.name.clone()).or_default();
-                        let response = if field.multiline {
-                            ui.add(
-                                egui::TextEdit::multiline(value)
-                                    .password(field.secret)
-                                    .desired_rows(4)
-                                    .desired_width(f32::INFINITY),
-                            )
-                        } else {
-                            ui.add(
-                                egui::TextEdit::singleline(value)
-                                    .password(field.secret)
-                                    .desired_width(f32::INFINITY),
-                            )
-                        };
-                        if response.changed() {
-                            self.error = None;
+            ui.add_enabled_ui(!busy, |ui| {
+                egui::ScrollArea::vertical()
+                    .max_height(self.form_height)
+                    .show(ui, |ui| {
+                        for field in &self.fields {
+                            let label = if field.label.is_empty() {
+                                &field.name
+                            } else {
+                                &field.label
+                            };
+                            ui.label(label);
+                            let value = self.values.entry(field.name.clone()).or_default();
+                            let response = if field.multiline {
+                                egui::ScrollArea::vertical()
+                                    .id_salt(("auth_multiline", field.name.as_str()))
+                                    .max_height(AUTH_MULTILINE_INPUT_HEIGHT)
+                                    .min_scrolled_height(AUTH_MULTILINE_INPUT_HEIGHT)
+                                    .scroll_bar_visibility(
+                                        egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded,
+                                    )
+                                    .show(ui, |ui| {
+                                        ui.add(
+                                            egui::TextEdit::multiline(value)
+                                                .password(field.secret)
+                                                .desired_rows(4)
+                                                .desired_width(f32::INFINITY),
+                                        )
+                                    })
+                                    .inner
+                            } else {
+                                ui.add(
+                                    egui::TextEdit::singleline(value)
+                                        .password(field.secret)
+                                        .desired_width(f32::INFINITY),
+                                )
+                            };
+                            if response.changed() {
+                                self.error = None;
+                            }
+                        }
+                    });
+                ui.add_space(1.0);
+                if ui.button("Colar atribuições do clipboard").clicked() {
+                    if let Ok(mut clipboard) = arboard::Clipboard::new() {
+                        if let Ok(text) = clipboard.get_text() {
+                            let allowed: Vec<String> =
+                                self.fields.iter().map(|field| field.name.clone()).collect();
+                            if let Ok(values) =
+                                crate::config::env_file::parse_allowed(&text, &allowed)
+                            {
+                                self.values.extend(values);
+                            }
                         }
                     }
-                });
-            if ui.button("Colar atribuições do clipboard").clicked() {
-                if let Ok(mut clipboard) = arboard::Clipboard::new() {
-                    if let Ok(text) = clipboard.get_text() {
-                        let allowed: Vec<String> =
-                            self.fields.iter().map(|field| field.name.clone()).collect();
-                        if let Ok(values) = crate::config::env_file::parse_allowed(&text, &allowed)
-                        {
-                            self.values.extend(values);
-                        }
-                    }
-                }
-                self.error = None;
-            }
-            if let Some(error) = &self.error {
-                ui.colored_label(egui::Color32::RED, error);
-            }
-            ui.separator();
-            ui.horizontal(|ui| {
-                if ui.button("Cancelar").clicked() {
-                    close(ctx);
-                }
-                if ui.button("Validar e usar").clicked() {
-                    let missing: Vec<&str> = self
-                        .fields
-                        .iter()
-                        .filter(|field| {
-                            field.required
-                                && self
-                                    .values
-                                    .get(&field.name)
-                                    .is_none_or(|value| value.trim().is_empty())
-                        })
-                        .map(|field| field.name.as_str())
-                        .collect();
-                    if missing.is_empty() {
-                        *self.outcome.borrow_mut() = Some(self.values.clone());
-                        close(ctx);
-                    } else {
-                        self.error = Some(format!("Campos obrigatórios: {}", missing.join(", ")));
-                    }
+                    self.error = None;
                 }
             });
         });
     }
 }
 
+impl AuthApp {
+    fn start_validation(&mut self, ctx: &egui::Context) {
+        let missing: Vec<&str> = self
+            .fields
+            .iter()
+            .filter(|field| {
+                field.required
+                    && self
+                        .values
+                        .get(&field.name)
+                        .is_none_or(|value| value.trim().is_empty())
+            })
+            .map(|field| field.name.as_str())
+            .collect();
+        if !missing.is_empty() {
+            self.error = Some(format!("Campos obrigatórios: {}", missing.join(", ")));
+            return;
+        }
+
+        self.error = None;
+        let fields = self.values.clone();
+        let validation = self.validation.clone();
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let auth_env = crate::runtime::exec::interpolate_environment(
+                &validation.environment_templates,
+                &fields,
+            );
+            let outcome = match validation.command {
+                None => AuthValidationOutcome::Accepted,
+                Some(command) => match tokio::runtime::Runtime::new() {
+                    Ok(runtime) => match runtime.block_on(crate::runtime::exec::validate_command(
+                        &command,
+                        &validation.args,
+                        &validation.persistent_env,
+                        &auth_env,
+                    )) {
+                        Ok(true) => AuthValidationOutcome::Accepted,
+                        Ok(false) => AuthValidationOutcome::Rejected,
+                        Err(_) => AuthValidationOutcome::Failed,
+                    },
+                    Err(_) => AuthValidationOutcome::Failed,
+                },
+            };
+            let _ = tx.send((outcome, fields));
+        });
+        self.pending = Some(rx);
+        ctx.request_repaint();
+    }
+
+    fn poll_validation(&mut self, ctx: &egui::Context) {
+        if let Some(success_since) = self.success_since {
+            let elapsed = success_since.elapsed();
+            if elapsed >= PROMPT_TERMINAL_VISIBLE_FOR {
+                self.success_since = None;
+                close(ctx);
+            } else {
+                ctx.request_repaint_after(PROMPT_TERMINAL_VISIBLE_FOR - elapsed);
+            }
+            return;
+        }
+
+        let Some(rx) = &self.pending else { return };
+        match rx.try_recv() {
+            Ok((AuthValidationOutcome::Accepted, fields)) => {
+                self.pending = None;
+                *self.outcome.borrow_mut() = Some(fields);
+                self.success_since = Some(Instant::now());
+                self.error = None;
+                ctx.request_repaint_after(PROMPT_TERMINAL_VISIBLE_FOR);
+            }
+            Ok((AuthValidationOutcome::Rejected, _)) => {
+                self.pending = None;
+                *self.invalid_attempts.borrow_mut() += 1;
+                self.error = Some("Sessão recusada. Revise os dados e tente novamente.".into());
+            }
+            Ok((AuthValidationOutcome::Failed, _)) => {
+                self.pending = None;
+                self.error = Some("Não foi possível executar a validação.".into());
+            }
+            Err(mpsc::TryRecvError::Empty) => {
+                ctx.request_repaint_after(Duration::from_millis(50));
+            }
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.pending = None;
+                self.error = Some("A validação foi interrompida.".into());
+            }
+        }
+    }
+}
+
+fn auth_form_height(fields: &[AuthField]) -> f32 {
+    fields
+        .iter()
+        .map(|field| if field.multiline { 92.0 } else { 38.0 })
+        .sum::<f32>()
+        .clamp(60.0, 280.0)
+}
+
+fn auth_window_height(fields: &[AuthField]) -> f32 {
+    (140.0 + auth_form_height(fields)).clamp(240.0, 460.0)
+}
+
 fn auth_window(
     provider: String,
     fields: Vec<AuthField>,
     error: Option<String>,
-) -> std::result::Result<Option<HashMap<String, String>>, String> {
+    validation: AuthValidation,
+) -> AuthPromptResult {
+    let height = auth_window_height(&fields);
+    let form_height = auth_form_height(&fields);
     let outcome = Rc::new(RefCell::new(None));
     let result = Rc::clone(&outcome);
-    eframe::run_native(
+    let invalid_attempts = Rc::new(RefCell::new(0));
+    let app_invalid_attempts = Rc::clone(&invalid_attempts);
+    let _ = eframe::run_native(
         "Torii — autenticação",
-        native_options(620.0, 560.0),
+        native_options(620.0, height),
         Box::new(move |_| {
             Ok(Box::new(AuthApp {
                 provider,
                 fields,
                 values: HashMap::new(),
                 error,
+                pending: None,
+                success_since: None,
+                validation,
+                form_height,
                 outcome: result,
+                invalid_attempts: app_invalid_attempts,
             }))
         }),
-    )
-    .map_err(|error| error.to_string())?;
-    let value = outcome.borrow().clone();
-    Ok(value)
+    );
+    let fields = outcome.borrow().clone();
+    let invalid_attempts = *invalid_attempts.borrow();
+    AuthPromptResult {
+        fields,
+        invalid_attempts,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn field(multiline: bool) -> AuthField {
+        AuthField {
+            name: "FIELD".into(),
+            label: String::new(),
+            secret: false,
+            required: true,
+            multiline,
+        }
+    }
+
+    #[test]
+    fn authentication_window_height_tracks_form_content_and_is_bounded() {
+        let compact = auth_window_height(&[field(false)]);
+        let aws_form = auth_window_height(&[field(false), field(false), field(true)]);
+        let large = auth_window_height(&vec![field(true); 12]);
+
+        assert_eq!(compact, 240.0);
+        assert!(aws_form < 340.0);
+        assert!(aws_form > compact);
+        assert_eq!(large, 420.0);
+    }
+
+    #[test]
+    fn access_tokens_are_rendered_without_shell_ambiguity() {
+        assert_eq!(display_token("pods -A", usize::MAX), "\"pods -A\"");
+        assert_eq!(display_token("", usize::MAX), "\"\"");
+        assert_eq!(display_token("a\nb", usize::MAX), "\"a\\nb\"");
+    }
+
+    #[test]
+    fn access_window_height_expands_only_with_the_selected_flow() {
+        assert_eq!(access_height(false, false, false), ACCESS_ONCE_HEIGHT);
+        assert_eq!(access_height(true, false, false), ACCESS_TIMED_EXACT_HEIGHT);
+        assert_eq!(access_height(true, true, false), ACCESS_TIMED_PREFIX_HEIGHT);
+        assert_eq!(access_height(false, false, true), 450.0);
+        assert_eq!(access_height(true, true, true), ACCESS_MAX_HEIGHT);
+    }
+
+    #[test]
+    fn prefix_suggestion_stops_before_the_first_option() {
+        let args = ["get", "pods", "-n", "financeiro"]
+            .map(str::to_owned)
+            .to_vec();
+        assert_eq!(suggested_prefix_len(&args), Some(2));
+
+        let deep = ["network", "vnet", "subnet", "list", "--group", "x"]
+            .map(str::to_owned)
+            .to_vec();
+        assert_eq!(suggested_prefix_len(&deep), Some(4));
+    }
+
+    #[test]
+    fn prefix_suggestion_falls_back_when_the_boundary_is_too_early_or_absent() {
+        let interleaved = ["get", "-n", "financeiro", "pods"]
+            .map(str::to_owned)
+            .to_vec();
+        assert_eq!(suggested_prefix_len(&interleaved), None);
+
+        let leading = ["--profile", "dev", "sts", "get-caller-identity"]
+            .map(str::to_owned)
+            .to_vec();
+        assert_eq!(suggested_prefix_len(&leading), None);
+
+        let no_options = ["get", "pods"].map(str::to_owned).to_vec();
+        assert_eq!(suggested_prefix_len(&no_options), None);
+    }
+
+    #[test]
+    fn access_resize_keeps_the_current_window_center() {
+        let expanded = centered_resize_position(360.0, egui::pos2(100.0, 200.0), 620.0);
+        assert_eq!(expanded, egui::pos2(100.0, 70.0));
+
+        let compact = centered_resize_position(620.0, expanded, 360.0);
+        assert_eq!(compact, egui::pos2(100.0, 200.0));
+    }
+
+    #[test]
+    fn compact_token_shows_both_ends_and_size() {
+        let value = format!("begin-{}-end", "x".repeat(128));
+        let label = compact_token_label(&value, 3);
+
+        assert!(label.starts_with("#4 \"begin-"));
+        assert!(label.contains("-end\""));
+        assert!(label.ends_with(" B"));
+        assert!(!label.contains(&"x".repeat(64)));
+    }
+
+    #[test]
+    fn large_token_details_are_utf8_safe_and_paged() {
+        let value = "🦀".repeat(TOKEN_DETAIL_PAGE_CHARS + 2);
+        let first = token_detail_page(&value, 0);
+        let second = token_detail_page(&value, 1);
+
+        assert_eq!(
+            serde_json::from_str::<String>(&first)
+                .unwrap()
+                .chars()
+                .count(),
+            TOKEN_DETAIL_PAGE_CHARS
+        );
+        assert_eq!(serde_json::from_str::<String>(&second).unwrap(), "🦀🦀");
+        assert!(bounded_token_preview(&value, 4).ends_with("…\""));
+    }
 }

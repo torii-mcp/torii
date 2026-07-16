@@ -4,7 +4,13 @@ use crate::providers::registry::valid_name;
 use crate::providers::{Provider, ProviderRegistry, TargetConfig, TargetMode};
 use std::process::Stdio;
 
-pub async fn add(paths: &ConfigPaths, tool: &str, name: &str, context: &str) -> Result<()> {
+pub async fn add(
+    paths: &ConfigPaths,
+    tool: &str,
+    name: &str,
+    context: &str,
+    lifecycle_provider: &str,
+) -> Result<()> {
     if !valid_name(name) {
         return Err(Error::InvalidArguments(format!(
             "invalid target name {name:?}"
@@ -17,6 +23,7 @@ pub async fn add(paths: &ConfigPaths, tool: &str, name: &str, context: &str) -> 
     }
     let registry = ProviderRegistry::load(paths)?;
     let provider = targeted_provider(&registry, tool)?;
+    let lifecycle_provider = validate_lifecycle_provider(&registry, lifecycle_provider)?;
     let destination = provider.paths.target(name);
     if destination.base().exists() {
         return Err(Error::InvalidArguments(format!(
@@ -41,6 +48,7 @@ pub async fn add(paths: &ConfigPaths, tool: &str, name: &str, context: &str) -> 
         version: "1".into(),
         name: name.into(),
         context: context.into(),
+        provider: lifecycle_provider.config.tool.clone(),
     };
     let yaml = serde_yaml::to_string(&config).map_err(|source| Error::Yaml {
         path: staged.config(),
@@ -55,6 +63,25 @@ pub async fn add(paths: &ConfigPaths, tool: &str, name: &str, context: &str) -> 
         source,
     })?;
     Ok(())
+}
+
+fn validate_lifecycle_provider(
+    registry: &ProviderRegistry,
+    tool: &str,
+) -> Result<std::sync::Arc<Provider>> {
+    let provider = registry
+        .get(tool)
+        .ok_or_else(|| {
+            Error::InvalidArguments(format!(
+                "target lifecycle provider tool {tool:?} is not installed; install the provider before adding this target"
+            ))
+        })?;
+    if provider.uses_targets() {
+        return Err(Error::InvalidArguments(format!(
+            "target lifecycle provider tool {tool:?} cannot require a target"
+        )));
+    }
+    Ok(provider)
 }
 
 pub fn list(paths: &ConfigPaths, tool: &str) -> Result<()> {

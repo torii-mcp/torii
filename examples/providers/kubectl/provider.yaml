@@ -10,8 +10,6 @@ targeting:
 
 policy:
   minimum_accept_tokens: 1
-  grant_rule:
-    mode: exact
 
 auth:
   strategy: inherited

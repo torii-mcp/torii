@@ -40,4 +40,5 @@
 - [Solução de problemas](operations/troubleshooting.md)
 - [Arquitetura do código](development/architecture.md)
 - [Testes e qualidade](development/testing.md)
+- [Homologação live de AWS e Kubernetes](development/live-test.md)
 - [Limites atuais e evolução](development/roadmap.md)

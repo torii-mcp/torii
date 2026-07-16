@@ -154,10 +154,21 @@ async fn run_async(args: Vec<String>) -> Result<i32> {
         [command, tool, target] if command == "reauth" => {
             reauth(&paths, tool, Some(target)).await
         }
-        [command, subcommand, tool, name, context_flag, context]
-            if command == "target" && subcommand == "add" && context_flag == "--context" =>
+        [
+            command,
+            subcommand,
+            tool,
+            name,
+            context_flag,
+            context,
+            provider_flag,
+            lifecycle_provider,
+        ] if command == "target"
+            && subcommand == "add"
+            && context_flag == "--context"
+            && provider_flag == "--provider" =>
         {
-            crate::targets::add(&paths, tool, name, context).await?;
+            crate::targets::add(&paths, tool, name, context, lifecycle_provider).await?;
             eprintln!("Target {name:?} added to provider tool {tool:?}.");
             Ok(0)
         }
@@ -176,7 +187,7 @@ async fn run_async(args: Vec<String>) -> Result<i32> {
             eprintln!("Target {name:?} removed from provider tool {tool:?}.");
             Ok(0)
         }
-        _ => Err(Error::InvalidArguments("usage: torii | torii init | torii reauth <provider-tool> [target] | torii provider list | torii provider search [query] | torii provider install <name|directory|archive|https-url> | torii provider setup <provider> <setup> | torii provider update <provider> | torii target add <provider-tool> <name> --context <kubectl-context> | torii target list <provider-tool> | torii target show <provider-tool> <name> | torii target remove <provider-tool> <name> --force | torii agent list | torii agent install <codex|claude|gemini|cursor> [--hook] | torii agent status <codex|claude|gemini|cursor> | torii agent uninstall <codex|claude|gemini|cursor> [--hook] | torii config-dir".into())),
+        _ => Err(Error::InvalidArguments("usage: torii | torii init | torii reauth <provider-tool> [target] | torii provider list | torii provider search [query] | torii provider install <name|directory|archive|https-url> | torii provider setup <provider> <setup> | torii provider update <provider> | torii target add <provider-tool> <name> --context <kubectl-context> --provider <provider-tool> | torii target list <provider-tool> | torii target show <provider-tool> <name> | torii target remove <provider-tool> <name> --force | torii agent list | torii agent install <codex|claude|gemini|cursor> [--hook] | torii agent status <codex|claude|gemini|cursor> | torii agent uninstall <codex|claude|gemini|cursor> [--hook] | torii config-dir".into())),
     }
 }
 
@@ -203,13 +214,8 @@ async fn reauth(paths: &ConfigPaths, tool: &str, target_name: Option<&String>) -
     let provider = registry
         .get(tool)
         .ok_or_else(|| Error::ProviderNotFound(tool.into()))?;
-    let mut persistent = env_file::load(
-        &provider
-            .paths
-            .base()
-            .join(&provider.config.environment.file),
-    )?;
-    let (auth_paths, auth_lock, audit_scope) = if provider.uses_targets() {
+    let (auth_provider, auth_paths, auth_lock, audit_scope, persistent) = if provider.uses_targets()
+    {
         let name = target_name.ok_or_else(|| {
             Error::InvalidArguments(format!("target is required for provider tool {tool:?}"))
         })?;
@@ -218,17 +224,16 @@ async fn reauth(paths: &ConfigPaths, tool: &str, target_name: Option<&String>) -
                 "unknown target {name:?} for provider tool {tool:?}"
             ))
         })?;
-        for (key, value) in env_file::load(&target.paths.env())? {
-            if let Some((_, existing)) = persistent.iter_mut().find(|(item, _)| item == &key) {
-                *existing = value;
-            } else {
-                persistent.push((key, value));
-            }
-        }
+        let auth_provider = registry
+            .get(&target.config.provider)
+            .ok_or_else(|| Error::ProviderNotFound(target.config.provider.clone()))?;
+        let persistent = provider_environment(&auth_provider)?;
         (
-            target.paths.auth_paths(),
-            target.auth_lock.clone(),
-            format!("{}/{}", provider.config.name, target.config.name),
+            auth_provider.clone(),
+            auth_provider.paths.auth_paths(),
+            auth_provider.auth_lock.clone(),
+            auth_provider.config.name.clone(),
+            persistent,
         )
     } else {
         if target_name.is_some() {
@@ -237,14 +242,16 @@ async fn reauth(paths: &ConfigPaths, tool: &str, target_name: Option<&String>) -
             )));
         }
         (
+            provider.clone(),
             provider.paths.auth_paths(),
             provider.auth_lock.clone(),
             provider.config.name.clone(),
+            provider_environment(&provider)?,
         )
     };
     session::ensure_valid(
         paths,
-        &provider,
+        &auth_provider,
         &auth_paths,
         auth_lock.as_ref(),
         &audit_scope,
@@ -254,4 +261,13 @@ async fn reauth(paths: &ConfigPaths, tool: &str, target_name: Option<&String>) -
     .await?;
     eprintln!("Session for {audit_scope:?} renewed and validated.");
     Ok(0)
+}
+
+fn provider_environment(provider: &crate::providers::Provider) -> Result<Vec<(String, String)>> {
+    env_file::load(
+        &provider
+            .paths
+            .base()
+            .join(&provider.config.environment.file),
+    )
 }

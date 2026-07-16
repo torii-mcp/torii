@@ -34,10 +34,10 @@ struct InvocationScope {
     audit_scope: String,
     rules: std::path::PathBuf,
     grants: std::path::PathBuf,
-    auth_paths: AuthPaths,
-    auth_lock: std::sync::Arc<tokio::sync::Mutex<()>>,
+    direct_auth: Option<(AuthPaths, std::sync::Arc<tokio::sync::Mutex<()>>)>,
     target_args: Vec<String>,
     target_env: Option<std::path::PathBuf>,
+    lifecycle_provider: Option<String>,
 }
 
 impl Invoker {
@@ -69,7 +69,6 @@ impl Invoker {
             .get(tool)
             .ok_or_else(|| Error::ProviderNotFound(tool.into()))?;
         let scope = resolve_scope(&provider, target_name, args)?;
-        let grant_rule = grants::derive_rule(args, &provider.config.policy.grant_rule);
         let audit_rule = args
             .iter()
             .take(2)
@@ -120,14 +119,8 @@ impl Invoker {
                 }
             }
             Evaluation::Unresolved => {
-                self.resolve_unresolved(
-                    &scope.audit_scope,
-                    &scope.grants,
-                    args,
-                    &grant_rule,
-                    &audit_rule,
-                )
-                .await?
+                self.resolve_unresolved(&scope.audit_scope, &scope.grants, args, &audit_rule)
+                    .await?
             }
         };
 
@@ -146,16 +139,29 @@ impl Invoker {
         if let Some(path) = &scope.target_env {
             merge_environment(&mut persistent_env, env_file::load(path)?);
         }
-        let auth_env = session::ensure_valid(
-            &self.paths,
-            &provider,
-            &scope.auth_paths,
-            scope.auth_lock.as_ref(),
-            &scope.audit_scope,
-            &persistent_env,
-            false,
-        )
-        .await?;
+        let auth_env = if let Some(lifecycle_provider) = &scope.lifecycle_provider {
+            self.ensure_target_provider(&scope, lifecycle_provider)
+                .await?
+        } else {
+            let (auth_paths, auth_lock) =
+                scope
+                    .direct_auth
+                    .as_ref()
+                    .ok_or_else(|| Error::InvalidProvider {
+                        provider: provider.config.name.clone(),
+                        reason: "invocation has no authentication scope".into(),
+                    })?;
+            session::ensure_valid(
+                &self.paths,
+                &provider,
+                auth_paths,
+                auth_lock.as_ref(),
+                &scope.audit_scope,
+                &persistent_env,
+                false,
+            )
+            .await?
+        };
         let mut prefix = provider.config.args_prefix.clone();
         prefix.extend(scope.target_args.iter().cloned());
         let execution = exec::run_command(
@@ -187,26 +193,38 @@ impl Invoker {
         audit_scope: &str,
         grants_path: &Path,
         args: &[String],
-        grant_rule: &str,
         audit_rule: &str,
     ) -> Result<PolicyDecision> {
         let now = audit::now_epoch();
-        let active = grants::load_active(grants_path, now);
-        if let Some(rule) = grants::matching_grant(&active, args, now) {
+        let loaded = grants::load_active(grants_path, now);
+        if loaded.legacy_ignored {
+            audit::log(
+                &self.paths,
+                audit_scope,
+                "legacy-grants-ignored",
+                audit_rule,
+                "reapproval-required",
+            );
+        }
+        if loaded.invalid_ignored {
+            audit::log(
+                &self.paths,
+                audit_scope,
+                "invalid-grants-ignored",
+                audit_rule,
+                "reapproval-required",
+            );
+        }
+        if let Some(evidence) = grants::matching_grant(&loaded.active, args, now) {
             audit::log(&self.paths, audit_scope, "allowed-by-grant", audit_rule, "");
             return Ok(PolicyDecision {
                 result: DecisionResult::Allow,
                 source: "grant".into(),
-                rule: Some(rule),
+                rule: Some(evidence.reference()),
             });
         }
-        let choice = control::ask_access(
-            audit_scope,
-            &args.join(" "),
-            grant_rule,
-            self.settings.default_grant_minutes,
-        )
-        .await?;
+        let choice =
+            control::ask_access(audit_scope, args, self.settings.default_grant_minutes).await?;
         match choice {
             AccessChoice::Deny => {
                 audit::log(&self.paths, audit_scope, "denied-interface", audit_rule, "");
@@ -221,11 +239,26 @@ impl Invoker {
                 Ok(PolicyDecision {
                     result: DecisionResult::Allow,
                     source: "human-once".into(),
-                    rule: Some(grant_rule.into()),
+                    rule: None,
                 })
             }
-            AccessChoice::AllowFor(minutes) => {
-                grants::add(grants_path, grant_rule, now + u64::from(minutes) * 60, now)?;
+            AccessChoice::AllowFor { minutes, selection } => {
+                let Some(matcher) = grants::GrantMatcher::from_selection(args, selection) else {
+                    audit::log(
+                        &self.paths,
+                        audit_scope,
+                        "denied-interface",
+                        audit_rule,
+                        "invalid-grant-selection",
+                    );
+                    return Ok(PolicyDecision {
+                        result: DecisionResult::Deny,
+                        source: "human-deny".into(),
+                        rule: None,
+                    });
+                };
+                let evidence =
+                    grants::add(grants_path, &matcher, now + u64::from(minutes) * 60, now)?;
                 audit::log(
                     &self.paths,
                     audit_scope,
@@ -236,10 +269,61 @@ impl Invoker {
                 Ok(PolicyDecision {
                     result: DecisionResult::Allow,
                     source: "human-grant".into(),
-                    rule: Some(grant_rule.into()),
+                    rule: Some(evidence.reference()),
                 })
             }
         }
+    }
+
+    async fn ensure_target_provider(
+        &self,
+        scope: &InvocationScope,
+        tool: &str,
+    ) -> Result<Vec<(String, String)>> {
+        audit::log(
+            &self.paths,
+            &scope.audit_scope,
+            "preflight-provider",
+            tool,
+            "",
+        );
+        let result = async {
+            let provider = self
+                .registry
+                .get(tool)
+                .ok_or_else(|| Error::ProviderNotFound(tool.into()))?;
+            let mut environment = env_file::load(
+                &provider
+                    .paths
+                    .base()
+                    .join(&provider.config.environment.file),
+            )?;
+            let session_env = session::ensure_valid(
+                &self.paths,
+                &provider,
+                &provider.paths.auth_paths(),
+                provider.auth_lock.as_ref(),
+                &provider.config.name,
+                &environment,
+                false,
+            )
+            .await?;
+            merge_environment(&mut environment, session_env);
+            Ok(environment)
+        }
+        .await;
+        audit::log(
+            &self.paths,
+            &scope.audit_scope,
+            if result.is_ok() {
+                "preflight-ok"
+            } else {
+                "preflight-failed"
+            },
+            tool,
+            "",
+        );
+        result
     }
 }
 
@@ -260,10 +344,10 @@ fn resolve_scope(
             audit_scope: provider.config.name.clone(),
             rules: provider.paths.rules(),
             grants: provider.paths.grants(),
-            auth_paths: provider.paths.auth_paths(),
-            auth_lock: provider.auth_lock.clone(),
+            direct_auth: Some((provider.paths.auth_paths(), provider.auth_lock.clone())),
             target_args: Vec::new(),
             target_env: None,
+            lifecycle_provider: None,
         });
     };
 
@@ -303,10 +387,10 @@ fn resolve_scope(
         audit_scope: format!("{}/{}", provider.config.name, target.config.name),
         rules,
         grants: target.paths.grants(),
-        auth_paths: target.paths.auth_paths(),
-        auth_lock: target.auth_lock.clone(),
+        direct_auth: None,
         target_args,
         target_env: Some(target.paths.env()),
+        lifecycle_provider: Some(target.config.provider.clone()),
     })
 }
 
@@ -331,5 +415,83 @@ fn merge_environment(base: &mut Vec<(String, String)>, overrides: Vec<(String, S
         } else {
             base.push((key, value));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[tokio::test]
+    async fn target_provider_returns_persistent_and_session_environment() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let paths = ConfigPaths::new(temp.path().to_path_buf());
+
+        let auth = paths.provider("auth");
+        auth.ensure().unwrap();
+        fs::write(
+            auth.config(),
+            r#"
+version: "1"
+name: auth
+tool: auth
+description: authentication provider
+command: executable-not-used
+auth:
+  strategy: environment
+  fields:
+    - { name: SESSION, required: true, secret: true }
+  inject:
+    environment: { SESSION_TOKEN: "${SESSION}" }
+  validate: { command: executable-not-used, args: [] }
+environment: { file: .env }
+"#,
+        )
+        .unwrap();
+        fs::write(auth.env(), "AUTH_PROFILE=test\n").unwrap();
+        fs::write(auth.credentials(), "SESSION=fake-secret\n").unwrap();
+        fs::write(auth.session_cache(), audit::now_epoch().to_string()).unwrap();
+
+        let target_provider = paths.provider("target");
+        target_provider.ensure().unwrap();
+        fs::write(
+            target_provider.config(),
+            r#"
+version: "1"
+name: target
+tool: target
+description: targeted provider
+command: executable-not-used
+targeting: { mode: kubectl_context }
+auth: { strategy: inherited }
+environment: { file: .env }
+"#,
+        )
+        .unwrap();
+        fs::write(
+            target_provider.rules(),
+            "version: '1.0'\ndeny: []\naccept: ['get']\n",
+        )
+        .unwrap();
+        let target = target_provider.target("lab");
+        target.ensure().unwrap();
+        fs::write(
+            target.config(),
+            "version: '1'\nname: lab\ncontext: local\nprovider: auth\n",
+        )
+        .unwrap();
+
+        let registry = ProviderRegistry::load(&paths).unwrap();
+        let provider = registry.get("target").unwrap();
+        let scope = resolve_scope(&provider, Some("lab"), &["get".into()]).unwrap();
+        let invoker = Invoker::new(paths, Settings::default(), registry);
+        let environment = invoker
+            .ensure_target_provider(&scope, "auth")
+            .await
+            .unwrap();
+
+        assert!(environment.contains(&("AUTH_PROFILE".into(), "test".into())));
+        assert!(environment.contains(&("SESSION_TOKEN".into(), "fake-secret".into())));
     }
 }

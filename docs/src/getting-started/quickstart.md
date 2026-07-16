@@ -37,7 +37,7 @@ O setup aplica a política curada somente se rules ainda estiver vazio. Revise a
 ## 4. Criar target Kubernetes
 
 ```powershell
-cargo run -- target add kubectl meu_dev --context meu-context-real
+cargo run -- target add kubectl meu_dev --context meu-context-real --provider aws
 ```
 
 ## 5. Preparar uma sessão AWS

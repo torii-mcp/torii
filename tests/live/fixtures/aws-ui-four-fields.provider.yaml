@@ -1,0 +1,44 @@
+version: "1"
+name: aws-ui-four-fields
+tool: aws
+description: Provider isolado para validar o layout com quatro campos.
+command: aws
+args_prefix: []
+
+policy:
+  minimum_accept_tokens: 2
+
+auth:
+  strategy: environment
+  fields:
+    - name: UI_VALUE_A
+      label: Value A
+      secret: false
+      required: true
+    - name: UI_VALUE_B
+      label: Value B
+      secret: false
+      required: true
+    - name: UI_VALUE_C
+      label: Value C
+      secret: true
+      required: true
+      multiline: true
+    - name: UI_VALUE_D
+      label: Value D
+      secret: true
+      required: true
+      multiline: true
+  inject:
+    environment:
+      TORII_UI_VALUE_A: "${UI_VALUE_A}"
+      TORII_UI_VALUE_B: "${UI_VALUE_B}"
+      TORII_UI_VALUE_C: "${UI_VALUE_C}"
+      TORII_UI_VALUE_D: "${UI_VALUE_D}"
+  validate:
+    command: aws
+    args: [sts, get-caller-identity]
+  cache_ttl_seconds: 300
+
+environment:
+  file: .env

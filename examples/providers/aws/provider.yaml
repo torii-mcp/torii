@@ -7,9 +7,6 @@ args_prefix: []
 
 policy:
   minimum_accept_tokens: 2
-  grant_rule:
-    mode: first_tokens
-    count: 2
 
 auth:
   strategy: environment
@@ -39,4 +36,3 @@ auth:
 
 environment:
   file: .env
-
