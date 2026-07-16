@@ -25,6 +25,10 @@ pub fn run() -> Result<i32> {
 async fn run_async(args: Vec<String>) -> Result<i32> {
     let paths = ConfigPaths::discover()?;
     match args.as_slice() {
+        [command] if matches!(command.as_str(), "--version" | "-V") => {
+            println!("{}", version_text());
+            Ok(0)
+        }
         [] => {
             let registry = ProviderRegistry::load(&paths)?;
             if registry.is_empty() {
@@ -187,8 +191,12 @@ async fn run_async(args: Vec<String>) -> Result<i32> {
             eprintln!("Target {name:?} removed from provider tool {tool:?}.");
             Ok(0)
         }
-        _ => Err(Error::InvalidArguments("usage: torii | torii init | torii reauth <provider-tool> [target] | torii provider list | torii provider search [query] | torii provider install <name|directory|archive|https-url> | torii provider setup <provider> <setup> | torii provider update <provider> | torii target add <provider-tool> <name> --context <kubectl-context> --provider <provider-tool> | torii target list <provider-tool> | torii target show <provider-tool> <name> | torii target remove <provider-tool> <name> --force | torii agent list | torii agent install <codex|claude|gemini|cursor> [--hook] | torii agent status <codex|claude|gemini|cursor> | torii agent uninstall <codex|claude|gemini|cursor> [--hook] | torii config-dir".into())),
+        _ => Err(Error::InvalidArguments("usage: torii [--version|-V] | torii init | torii reauth <provider-tool> [target] | torii provider list | torii provider search [query] | torii provider install <name|directory|archive|https-url> | torii provider setup <provider> <setup> | torii provider update <provider> | torii target add <provider-tool> <name> --context <kubectl-context> --provider <provider-tool> | torii target list <provider-tool> | torii target show <provider-tool> <name> | torii target remove <provider-tool> <name> --force | torii agent list | torii agent install <codex|claude|gemini|cursor> [--hook] | torii agent status <codex|claude|gemini|cursor> | torii agent uninstall <codex|claude|gemini|cursor> [--hook] | torii config-dir".into())),
     }
+}
+
+fn version_text() -> String {
+    format!("torii {}", env!("CARGO_PKG_VERSION"))
 }
 
 fn init(paths: &ConfigPaths) -> Result<i32> {
@@ -270,4 +278,17 @@ fn provider_environment(provider: &crate::providers::Provider) -> Result<Vec<(St
             .base()
             .join(&provider.config.environment.file),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::version_text;
+
+    #[test]
+    fn version_text_identifies_this_binary() {
+        assert_eq!(
+            version_text(),
+            format!("torii {}", env!("CARGO_PKG_VERSION"))
+        );
+    }
 }

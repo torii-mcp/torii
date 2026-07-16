@@ -5,6 +5,7 @@ Esta CLI pertence ao humano e nunca é publicada como tools MCP.
 | Comando | Efeito |
 |---|---|
 | `torii` | inicia o servidor MCP stdio |
+| `torii --version` ou `torii -V` | imprime a versão do binário |
 | `torii init` | cria raiz e settings, sem instalar providers |
 | `torii config-dir` | imprime o diretório de configuração |
 | `torii provider list` | lista providers locais, versão e origem |
