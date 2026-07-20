@@ -2,6 +2,8 @@
 
 Cada provider possui seu próprio `rules.yaml`. Em provider target-aware, um `rules.yaml` dentro do target substitui a política compartilhada somente naquele alias.
 
+Antes de Jasper consultar `accept`, grants ou uma aprovação de operação para um target-aware, o alias precisa de lease humano válido. O lease autoriza o uso temporário do binding, não a operação; rules e grants continuam sendo necessários. Revogar o lease não apaga grants existentes, mas impede seu uso até que o alias seja ativado novamente.
+
 ```yaml
 version: "1.0"
 deny:

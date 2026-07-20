@@ -1048,6 +1048,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn aws_profile_package_installs_a_target_aware_inherited_provider() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let paths = ConfigPaths::new(temp.path().join("config"));
+        let source = package("aws-profile").to_string_lossy().into_owned();
+
+        let (status, installed) = install(&paths, &source).await.unwrap();
+
+        assert_eq!(status, InstallStatus::Created);
+        assert_eq!(installed.name, "aws-profile");
+        let registry = crate::providers::ProviderRegistry::load(&paths).unwrap();
+        let provider = registry.get("aws_profile").unwrap();
+        assert!(matches!(
+            provider
+                .config
+                .targeting
+                .as_ref()
+                .map(|targeting| targeting.mode),
+            Some(crate::providers::TargetMode::AwsProfile)
+        ));
+        assert!(matches!(
+            provider.config.auth.strategy,
+            crate::providers::AuthStrategy::Inherited
+        ));
+    }
+
+    #[tokio::test]
     async fn update_preserves_rules_environment_and_runtime_state() {
         let temp = tempfile::TempDir::new().unwrap();
         let paths = ConfigPaths::new(temp.path().join("config"));
@@ -1061,6 +1087,11 @@ mod tests {
         .unwrap();
         std::fs::write(provider.env(), "CUSTOM=1\n").unwrap();
         std::fs::write(provider.grants(), "future grant\n").unwrap();
+        std::fs::write(
+            provider.target_authorizations(),
+            "future target authorization state\n",
+        )
+        .unwrap();
 
         update(&paths, "aws").await.unwrap();
 
@@ -1074,6 +1105,10 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(provider.grants()).unwrap(),
             "future grant\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(provider.target_authorizations()).unwrap(),
+            "future target authorization state\n"
         );
     }
 

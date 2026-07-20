@@ -16,6 +16,16 @@ torii agent install <codex|claude|gemini|cursor>
 
 A configuração fixa o caminho absoluto do executável Torii e o `TORII_CONFIG_DIR` usado durante a instalação. Reinicie o cliente para carregar a alteração.
 
+## Descoberta e autenticação
+
+O MCP instrui o agente a consultar `torii_policy` antes de selecionar uma operação. A tool devolve, somente para leitura, os `accept` e `deny` do provider ou target ativo; ela não executa CLIs e não lê ambiente ou credenciais.
+
+O agente não recebe tools de `reauth`, ativação, limpeza ou edição de targets. Quando uma chamada target-aware seleciona um alias inativo, o Torii pede ao humano um lease para o binding antes de consultar grants, ambiente ou sessão. Em headless, isso termina em negação. Para trocar ou renovar uma sessão gerenciada antes da chamada, o humano usa `torii reauth <provider-tool> [target]` no control plane.
+
+O agente não deve tratar um alias listado no schema como ambiente ativo: a lista mostra aliases configurados, não leases. Se **Adicionar** criar vários aliases ativos, a interface alerta o humano junto às ações e exige manter o botão pressionado por 2 segundos. Depois da confirmação, o agente poderá selecionar qualquer alias ativo nas operações permitidas; por isso deve escolher pelo alias semântico pedido pelo humano e não tentar alternar targets por conta própria.
+
+Para um target `aws_profile`, a conta ou o profile não são expostos ao agente. Se o Torii informar identidade ausente ou conta divergente, o agente pede que o humano autentique o profile já configurado pelo fluxo nativo AWS e repete o mesmo alias. Ele não tenta `reauth`, troca de target nem flags `--profile`/`--region`.
+
 > Se o comando for executado por `cargo run`, o cliente ficará apontando para o binário em `target/debug`. Prefira uma release instalada antes de configurar o agente.
 
 ## Arquivos alterados

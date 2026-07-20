@@ -16,6 +16,7 @@ Esta página distingue deliberadamente o que existe do que ainda precisa de prov
 - exemplos AWS e Kubernetes;
 - tool Kubernetes única com targets por context;
 - CLI humana de targets e isolamento de grants/cache/auth por alias;
+- leases humanos por provider para aliases target-aware, com expiração, digest de binding, CAS, lock e escrita atômica;
 - pacotes declarativos locais/remotos, catálogo pesquisável e update que preserva estado;
 
 ## Reconhecido, não implementado

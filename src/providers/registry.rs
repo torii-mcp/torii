@@ -3,15 +3,20 @@ use std::path::{Component, Path};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use super::config::{AuthStrategy, ProviderConfig, TargetConfig};
+use super::config::{AuthStrategy, ProviderConfig, TargetConfig, TargetMode};
 use crate::config::{ConfigPaths, ProviderPaths, TargetPaths};
 use crate::error::{Error, Result};
+
+const RESERVED_MCP_TOOL_NAMES: &[&str] = &["torii_policy"];
 
 #[derive(Debug)]
 pub struct Provider {
     pub config: ProviderConfig,
     pub paths: ProviderPaths,
-    pub auth_lock: Arc<Mutex<()>>,
+    /// One lock per credential scope. Serializing on the provider as a whole
+    /// would make independent scopes wait on each other for no reason.
+    auth_locks: std::sync::Mutex<BTreeMap<String, Arc<Mutex<()>>>>,
+    pub target_access_lock: Arc<Mutex<()>>,
     pub targets: BTreeMap<String, Arc<Target>>,
 }
 
@@ -32,6 +37,11 @@ impl Provider {
 
     pub fn uses_targets(&self) -> bool {
         self.config.targeting.is_some()
+    }
+
+    pub fn auth_lock(&self, scope: &str) -> Arc<Mutex<()>> {
+        let mut locks = self.auth_locks.lock().expect("auth lock map poisoned");
+        locks.entry(scope.to_string()).or_default().clone()
     }
 }
 
@@ -83,7 +93,8 @@ impl ProviderRegistry {
             let provider = Arc::new(Provider {
                 config,
                 paths: provider_paths,
-                auth_lock: Arc::new(Mutex::new(())),
+                auth_locks: std::sync::Mutex::new(BTreeMap::new()),
+                target_access_lock: Arc::new(Mutex::new(())),
                 targets,
             });
             if by_tool.insert(tool.clone(), provider).is_some() {
@@ -152,7 +163,12 @@ fn load_targets(
             continue;
         }
         let target: TargetConfig = load_yaml(&target_paths.config())?;
-        validate_target(&target, &target_paths)?;
+        let mode = config
+            .targeting
+            .as_ref()
+            .expect("targets only load for target-aware providers")
+            .mode;
+        validate_target(&target, &target_paths, mode)?;
         let name = target.name.clone();
         let value = Arc::new(Target {
             config: target,
@@ -195,6 +211,12 @@ pub(crate) fn validate(config: &ProviderConfig, _base: &Path) -> Result<()> {
     }
     if !valid_tool_name(&config.tool) {
         return Err(fail(format!("invalid MCP tool name {:?}", config.tool)));
+    }
+    if RESERVED_MCP_TOOL_NAMES.contains(&config.tool.as_str()) {
+        return Err(fail(format!(
+            "MCP tool name {:?} is reserved by Torii",
+            config.tool
+        )));
     }
     let env_path = Path::new(&config.environment.file);
     if config.environment.file.is_empty()
@@ -273,11 +295,18 @@ pub(crate) fn validate(config: &ProviderConfig, _base: &Path) -> Result<()> {
                 return Err(fail(format!("duplicate locked option {option:?}")));
             }
         }
+        if matches!(targeting.mode, TargetMode::AwsProfile)
+            && !matches!(config.auth.strategy, AuthStrategy::Inherited)
+        {
+            return Err(fail(
+                "aws_profile targets require auth.strategy: inherited so AWS_PROFILE cannot be overridden by collected environment credentials".into(),
+            ));
+        }
     }
     Ok(())
 }
 
-fn validate_target(config: &TargetConfig, paths: &TargetPaths) -> Result<()> {
+fn validate_target(config: &TargetConfig, paths: &TargetPaths, mode: TargetMode) -> Result<()> {
     let fail = |reason: String| Error::InvalidProvider {
         provider: config.name.clone(),
         reason,
@@ -302,38 +331,121 @@ fn validate_target(config: &TargetConfig, paths: &TargetPaths) -> Result<()> {
             config.name
         )));
     }
-    if config.context.trim().is_empty() || config.context.chars().any(|c| matches!(c, '\r' | '\n'))
+    if !valid_tool_name(&config.identity.provider) {
+        return Err(fail(format!(
+            "invalid identity provider tool {:?}",
+            config.identity.provider
+        )));
+    }
+    if let Some(scope) = &config.identity.scope {
+        if !valid_name(scope) {
+            return Err(fail(format!("invalid identity scope {scope:?}")));
+        }
+    }
+    if config
+        .identity
+        .profile
+        .as_ref()
+        .is_some_and(|profile| profile.trim().is_empty() || has_line_break(profile))
     {
         return Err(fail(
-            "context cannot be empty or contain line breaks".into(),
+            "identity profile cannot be empty or contain line breaks".into(),
         ));
     }
-    if !valid_tool_name(&config.provider) {
-        return Err(fail(format!(
-            "invalid target lifecycle provider tool {:?}",
-            config.provider
-        )));
+    if config
+        .identity
+        .expect
+        .as_ref()
+        .is_some_and(|expect| expect.trim().is_empty() || has_line_break(expect))
+    {
+        return Err(fail(
+            "identity expect cannot be empty or contain line breaks".into(),
+        ));
+    }
+    if config
+        .region
+        .as_ref()
+        .is_some_and(|region| region.trim().is_empty() || has_line_break(region))
+    {
+        return Err(fail("region cannot be empty or contain line breaks".into()));
+    }
+    match mode {
+        TargetMode::KubectlContext => {
+            let context = config.context.as_deref().unwrap_or_default();
+            if context.trim().is_empty() || has_line_break(context) {
+                return Err(fail(
+                    "context cannot be empty or contain line breaks for kubectl_context".into(),
+                ));
+            }
+        }
+        TargetMode::AwsProfile => {
+            if config.context.is_some() {
+                return Err(fail("aws_profile target cannot contain context".into()));
+            }
+            if config.identity.profile.is_none() {
+                return Err(fail("aws_profile target requires identity.profile".into()));
+            }
+            // The expected identity for an AWS profile is an account id.
+            if let Some(expect) = &config.identity.expect {
+                if expect.len() != 12 || !expect.bytes().all(|byte| byte.is_ascii_digit()) {
+                    return Err(fail(
+                        "expected_account_id must contain exactly 12 ASCII digits for aws_profile"
+                            .into(),
+                    ));
+                }
+            }
+        }
     }
     Ok(())
 }
 
+fn has_line_break(value: &str) -> bool {
+    value.chars().any(|c| matches!(c, '\r' | '\n'))
+}
+
 fn validate_target_providers(providers: &BTreeMap<String, Arc<Provider>>) -> Result<()> {
     for provider in providers.values() {
+        let mode = provider
+            .config
+            .targeting
+            .as_ref()
+            .map(|targeting| targeting.mode);
         for target in provider.targets.values() {
             let fail = |reason: String| Error::InvalidProvider {
                 provider: provider.config.name.clone(),
                 reason: format!("target {:?}: {reason}", target.config.name),
             };
-            let lifecycle_provider = providers.get(&target.config.provider).ok_or_else(|| {
-                fail(format!(
-                    "target lifecycle provider tool {:?} is not installed; install the provider before using this target",
-                    target.config.provider
-                ))
-            })?;
-            if lifecycle_provider.uses_targets() {
+            let identity_provider =
+                providers.get(&target.config.identity.provider).ok_or_else(|| {
+                    fail(format!(
+                        "identity provider tool {:?} is not installed; install the provider before using this target",
+                        target.config.identity.provider
+                    ))
+                })?;
+            // aws_profile is the one self-managed mode: the target authenticates
+            // through the very tool it belongs to, and that tool is target-aware.
+            let self_managed = matches!(mode, Some(TargetMode::AwsProfile))
+                && target.config.identity.provider == provider.config.tool;
+            if identity_provider.uses_targets() && !self_managed {
                 return Err(fail(format!(
-                    "target lifecycle provider tool {:?} cannot require a target",
-                    target.config.provider
+                    "identity provider tool {:?} cannot require a target",
+                    target.config.identity.provider
+                )));
+            }
+            if matches!(mode, Some(TargetMode::AwsProfile)) && !self_managed {
+                return Err(fail(format!(
+                    "aws_profile target must use its owning provider tool {:?} as identity provider",
+                    provider.config.tool
+                )));
+            }
+            // `expect` is only meaningful when the identity provider can answer
+            // "whose credentials are these?" — refuse the silent no-op otherwise.
+            if target.config.identity.expect.is_some()
+                && identity_provider.config.auth.identity.is_none()
+            {
+                return Err(fail(format!(
+                    "identity expect is set but identity provider tool {:?} declares no auth.identity probe",
+                    target.config.identity.provider
                 )));
             }
         }

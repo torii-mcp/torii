@@ -1,6 +1,6 @@
 seguinte, o awsgate está virando o torii...
 
-> **Decisão arquitetural posterior (julho de 2026):** o contrato Kubernetes foi consolidado em uma única tool `kubectl` com `target` obrigatório. Cada alias é criado pelo control plane humano, resolve para um context fixo e isola grants/cache/auth. Esta decisão substitui, para Kubernetes, as seções antigas deste documento que recomendam uma tool por ambiente ou deixam targets fora do escopo. A documentação oficial em `docs/` descreve o contrato vigente.
+> **Decisão arquitetural posterior (julho de 2026):** providers target-aware usam uma única tool com `target` obrigatório. Cada alias é criado pelo control plane humano, resolve para um binding fixo e isola grants/cache/auth. Todo target começa inativo e exige uma autorização humana temporária, independente da política Jasper e da autenticação; a troca pode substituir todos os ativos ou, com aviso explícito, manter vários. Kubernetes fixa o context e `aws_profile` fixa profile, conta esperada e região. Esta decisão substitui as seções antigas deste documento que recomendam uma tool por ambiente ou deixam targets fora do escopo. A documentação oficial em `docs/` descreve o contrato vigente.
 
 # Plano de transformação do AWS Gate em Torii
 

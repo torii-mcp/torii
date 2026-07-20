@@ -30,6 +30,8 @@ Uma chamada não resolvida pode receber permissão temporária. O operador escol
 
 O Torii mostra os argumentos como tokens e explica literalmente o alcance antes da confirmação. O provider não infere verbo, recurso ou operação.
 
+Em uma tool target-aware, Jasper só chega a grants depois de o dispatcher confirmar o lease humano do alias. O lease não aparece como regra Jasper e não transforma uma operação em permitida; ele apenas libera a escolha do binding antes da política.
+
 O arquivo `grants` usa a versão `2` e guarda somente um fingerprint tokenizado do matcher, nunca uma linha de comando reconstruída:
 
 ```yaml

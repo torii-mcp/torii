@@ -36,7 +36,9 @@ O repositório irmão `../awsgate` é somente referência. Nunca edite, formate,
 11. Stdout do processo servidor pertence exclusivamente ao transporte MCP. Diagnósticos vão para stderr ou auditoria.
 12. Uma tool por provider, nunca uma tool por operação.
 13. O agente não recebe tools de `kill`, `reauth`, instalação ou edição de política.
-14. Não crie uma abstração genérica antes de dois providers reais demonstrarem a necessidade.
+14. Targets começam inativos; alias anunciado não concede acesso. O lease humano temporário é verificado depois do deny explícito e antes de grants, ambiente ou autenticação.
+15. Lease de target é vinculado ao binding, relido do disco e atualizado com revisão/lock; uma aprovação aberta antes de `target clear` não pode restaurá-lo.
+16. Não crie uma abstração genérica antes de dois providers reais demonstrarem a necessidade.
 
 ## Mapa do código
 

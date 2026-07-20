@@ -15,7 +15,7 @@ O catálogo precisa ser aprovado antes da primeira execução oficial. Uma execu
 7. O agente confere resposta MCP, arquivos locais permitidos e eventos sanitizados de `torii.log`.
 8. Credenciais, conteúdo de `auth/credentials.env`, clipboard e stdout/stderr completos não entram na evidência.
 9. Depois de registrar a evidência, o agente remove somente a raiz daquele caso, após validar que o caminho continua dentro do diretório temporário e possui o prefixo esperado.
-10. Casos com múltiplas invocações preservam a mesma raiz até terminar todas as repetições. Isso se aplica a `allow once`, grant temporário, expiração, reautenticação transacional e isolamento entre targets.
+10. Casos com múltiplas invocações preservam a mesma raiz até terminar todas as repetições. Isso se aplica a `allow once`, grant temporário, expiração, reautenticação transacional, leases e isolamento entre targets.
 11. Diante de qualquer tentativa de escrita remota, context produtivo, regra extra ou divergência entre o plano aprovado e o ambiente preparado, o caso para antes da chamada.
 12. Os contexts reais dos casos Kubernetes são escolhidos somente no ambiente local e nunca entram no catálogo, evidência, resposta MCP ou auditoria. O target de referência é publicado apenas como `lab`; `K8S-AUTH-01` usa um segundo target não produtivo sob o alias `lab-noaccess`, com a mesma identidade válida do target de referência.
 
@@ -40,6 +40,7 @@ O agente apresenta um bloco com esta forma:
 Caso: <ID e nome>
 Raiz isolada: <caminho>
 Provider/target: <tool e alias>
+Lease de target: <inativo | comando de ativação, duração e aliases ativos>
 Operações remotas: <lista completa; todas read-only>
 Arquivos de regras: <conteúdo integral>
 Invocações previstas: <quantidade e ordem>
@@ -49,6 +50,18 @@ Cleanup: <o que será removido>
 ```
 
 Nenhuma invocação começa enquanto o operador não aprovar esse bloco. Alterar regra, comando, target ou sequência invalida a aprovação e exige um novo gate.
+
+## Leases em casos target-aware
+
+Todo alias target-aware começa inativo, embora continue no schema MCP. Nos casos que precisam chegar a Jasper, ambiente, autenticação ou execução, o preparo ativa explicitamente o alias pelo control plane, por exemplo:
+
+```powershell
+torii target activate kubectl lab --for 30
+```
+
+O gate registra duração, aliases ativos e a consequência de qualquer `--add`: durante a janela, o agente poderá escolher qualquer alias ativo. Casos que provam deny explícito, target ausente/desconhecido ou flag bloqueada mantêm o alias inativo quando a fronteira deve encerrar antes do lease.
+
+Qualquer homologação específica de lease verifica ainda que: todos os aliases continuam no schema; a janela reúne os ativos em uma seção compacta; **Substituir** deixa somente o solicitado ativo; quando **Adicionar** cria múltiplos ativos, o alerta ocupa a largura disponível imediatamente acima das ações e o botão mostra progresso, só concluindo após 2 segundos de pressão contínua; soltar antes reinicia a confirmação, enquanto o clique que traz a janela sem foco para frente já inicia a contagem; **Negar** não muda estado; `target clear` remove somente leases e não mata processos nem apaga grants, cache, credenciais, `.env` ou `target.yaml`; expiração, revogação ou mudança de binding impedem launch em rechecagens posteriores.
 
 ## Perfis mínimos de regras
 
@@ -177,6 +190,7 @@ Critérios:
 - `aws` exige apenas `args`;
 - `kubectl` exige `target` e `args`;
 - o enum de `target` anuncia somente `lab`;
+- `lab` continua anunciado sem lease ativo; consulta de schema não abre GUI nem cria lease;
 - nenhum context real aparece no schema;
 - nenhuma operação de provider ou GUI ocorre;
 - `torii.log` permanece ausente ou sem evento de invocação.
@@ -326,6 +340,8 @@ Esperado: `human-deny`/`denied-interface`, sem janela, auth, grant ou execução
 ## Casos Kubernetes
 
 O context real padrão é escolhido localmente pelo operador e sempre exposto ao MCP apenas como `lab`. O target declara localmente `provider`, referenciando o provider instalado cujo lifecycle deve herdar. O conteúdo da credencial e os nomes reais dos contexts não entram no catálogo nem na evidência de cada instância; somente aliases, tools de provider, hashes permitidos e classificações de resultado. As rules desse provider permanecem em R0 quando o agente não precisa invocá-lo diretamente.
+
+Exceto nos testes que verificam a própria fronteira de target, o preparo ativa `lab` por 30 minutos antes da primeira chamada MCP. Para `K8S-TGT-08`, ativa `lab_a` e adiciona `lab_b` conscientemente, registrando que ambos ficam selecionáveis pelo agente até a expiração ou limpeza.
 
 `K8S-AUTH-01` é a exceção controlada: usa um segundo context não produtivo sob o alias `lab-noaccess`, mas referencia o mesmo provider autenticador e usa uma identidade válida nele. O preflight do provider deve passar; a falta de acesso ao outro cluster é observada no exit code do `kubectl`, depois da autorização do Jasper.
 

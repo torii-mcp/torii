@@ -55,15 +55,24 @@ torii reauth aws
 torii reauth kubectl meu_dev
 ```
 
-Reauth aplica-se a autenticação gerenciada; `inherited` não possui material renovável pelo Torii. O reauth do target delega ao lifecycle do provider indicado no próprio target.
+Reauth aplica-se a autenticação gerenciada; `inherited` sem validator não possui material renovável pelo Torii. O reauth de um target delega ao lifecycle do provider de identidade (`identity.provider`), no balde do escopo do target. Um provider `inherited` com validator (login externo via SSO/profile) não é renovado por `reauth`: o humano autentica pelo fluxo nativo e o agente repete o alias.
 
 ## Targets
 
 ```powershell
 torii target add kubectl meu_dev --context contexto-local --provider aws
+torii target add aws_profile producao --profile empresa-producao --account-id 111122223333 --region sa-east-1
 torii target list kubectl
 torii target show kubectl meu_dev
+torii target activate kubectl meu_dev --for 30
+torii target status kubectl
+torii target activate aws_profile homologacao --for 30 --add
+torii target clear aws_profile
 torii target remove kubectl meu_dev --force
 ```
 
-Reinicie o servidor MCP após install, update ou mudança no conjunto de targets. `rules.yaml` é recarregado em cada chamada.
+O primeiro comando cria um binding Kubernetes; o segundo cria um binding AWS de profile e conta esperada. Profile e conta aparecem somente nos comandos humanos `target list` e `target show`, não no MCP. Criar não ativa: todos os aliases target-aware começam sem lease, mas continuam anunciados no schema MCP.
+
+`target activate` libera temporariamente um alias. Sem `--add`, ele substitui todos os aliases ativos daquela tool; com `--add`, preserva os existentes. A duração aceita 1 a 1.440 minutos e usa `default_target_minutes` (15) quando `--for` não é informado. Ao manter mais de um ativo, aceite deliberadamente que o agente poderá escolher qualquer alias ativo em uma operação permitida. `target status` mostra os leases e expirações. `target clear` revoga somente leases: não remove target, rules, grants, `.env`, cache ou credenciais e não encerra processos já iniciados.
+
+Reinicie o servidor MCP após install, update ou mudança no conjunto de targets. A criação/remoção muda o enum do schema; ativar, limpar ou aguardar a expiração não muda o enum. `rules.yaml` e o estado de lease são relidos durante cada chamada.

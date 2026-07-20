@@ -40,7 +40,9 @@ aws
 kubectl
 ```
 
-Não existem tools MCP de `kill`, `reauth`, instalação ou edição de política.
+Quando instalado, o pacote de aliases AWS acrescenta `aws_profile`. Seus targets anunciados são aliases humanos; profile e conta não aparecem para o cliente MCP. Todo alias configurado continua no schema, mesmo antes de um humano conceder seu lease temporário.
+
+Além de uma tool por provider, o Torii publica `torii_policy`, uma consulta somente de leitura das regras `accept` e `deny` ativas. Não existem tools MCP de `kill`, `reauth`, instalação ou edição de política.
 
 ## Integridade do stdout
 
@@ -66,3 +68,28 @@ Providers target-aware exigem o alias anunciado no schema:
 ```
 
 Não envie uma linha inteira em um campo `command` e não junte argumentos que deveriam ser itens separados. Veja a [API MCP](../reference/mcp-api.md) para respostas e erros.
+
+## Descobrir a política antes de executar
+
+O agente deve consultar `torii_policy` antes de escolher uma operação, em especial quando a allowlist não é conhecida:
+
+```json
+{
+  "provider": "aws"
+}
+```
+
+Para uma tool com target, inclua o alias:
+
+```json
+{
+  "provider": "kubectl",
+  "target": "mpce_dev"
+}
+```
+
+A consulta não executa o provider nem lê sessão ou lease. Regras fora de `accept` e `deny` continuam em default deny até uma aprovação humana ou grant temporário.
+
+Se um alias target-aware estiver inativo, o Torii pede a decisão humana sobre o binding antes de grants, ambiente e autenticação. Em headless, a chamada é negada. O agente não deve tentar ativar, limpar ou substituir aliases; aguarda a decisão humana. Se o humano mantiver mais de um alias ativo, o agente ainda pode escolher qualquer um deles nas operações permitidas.
+
+Se uma chamada `aws_profile` autorizada informar que a identidade não corresponde ao alias, peça que o humano autentique o profile configurado pelo AWS CLI e então repita a mesma chamada. Não tente enviar `--profile`, `--region` ou escolher outro target.

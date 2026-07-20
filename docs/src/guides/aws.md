@@ -1,6 +1,8 @@
 # Configurar AWS
 
-O pacote canônico de desenvolvimento está em `examples/providers/aws/`. Instale e, opcionalmente, aplique o setup curado:
+O pacote canônico de desenvolvimento está em `examples/providers/aws/`. Este guia cobre credenciais temporárias coletadas e validadas pelo Torii. Para profiles locais com aliases humanos e verificação de conta, veja [AWS por profile e aliases](aws-profiles.md). O lease de target não altera este provider simples: a tool `aws` continua recebendo somente `args` e não exige alias.
+
+Instale e, opcionalmente, aplique o setup curado:
 
 ```powershell
 torii provider install ./examples/providers/aws

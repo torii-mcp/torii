@@ -57,8 +57,36 @@ async fn mcp_executes_only_a_read_operation_and_denies_another_before_spawn() {
     let client = ().serve(transport).await.unwrap();
 
     let tools = client.list_all_tools().await.unwrap();
-    assert_eq!(tools.len(), 1);
+    assert_eq!(tools.len(), 2);
     assert_eq!(tools[0].name, "torii_reader");
+    assert_eq!(tools[1].name, "torii_policy");
+    assert_eq!(
+        tools[1]
+            .annotations
+            .as_ref()
+            .and_then(|annotations| annotations.read_only_hint),
+        Some(true)
+    );
+
+    let policy = client
+        .call_tool(
+            CallToolRequestParams::new("torii_policy").with_arguments(
+                json!({ "provider": "torii_reader" })
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            ),
+        )
+        .await
+        .unwrap();
+    let policy = structured(&policy);
+    assert_eq!(policy["provider"], "torii_reader");
+    assert_eq!(policy["accept"], json!(["config-dir"]));
+    assert_eq!(policy["deny"], json!(["agent list"]));
+    assert!(policy["unmatched"]
+        .as_str()
+        .unwrap()
+        .contains("default-deny"));
 
     let allowed = client
         .call_tool(

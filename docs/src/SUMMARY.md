@@ -21,6 +21,7 @@
 
 - [Escrever políticas](guides/policies.md)
 - [Configurar AWS](guides/aws.md)
+- [Configurar AWS por profile e aliases](guides/aws-profiles.md)
 - [Configurar Kubernetes](guides/kubernetes.md)
 - [Operar e reautenticar](guides/control-plane.md)
 - [Integrar agentes e instalar o hook](guides/agents.md)

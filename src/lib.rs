@@ -9,6 +9,7 @@ pub mod jasper;
 pub mod mcp;
 pub mod providers;
 pub mod runtime;
+pub mod target_access;
 pub mod targets;
 
 pub use error::{Error, Result};

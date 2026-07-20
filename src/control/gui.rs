@@ -9,7 +9,10 @@ use std::time::{Duration, Instant};
 use eframe::egui;
 use serde::{Deserialize, Serialize};
 
-use super::{AccessChoice, AuthPromptResult, AuthValidation, GrantSelection};
+use super::{
+    AccessChoice, ActiveTargetAuthorization, AuthPromptResult, AuthValidation, GrantSelection,
+    TargetAccessChoice,
+};
 use crate::error::{Error, Result};
 use crate::providers::AuthField;
 
@@ -19,6 +22,13 @@ enum PromptRequest {
     Access {
         provider: String,
         args: Vec<String>,
+        default_minutes: u32,
+    },
+    TargetAccess {
+        provider: String,
+        requested_target: String,
+        requested_binding: String,
+        active_targets: Vec<ActiveTargetAuthorization>,
         default_minutes: u32,
     },
     Auth {
@@ -33,6 +43,7 @@ enum PromptRequest {
 #[serde(tag = "kind", content = "value", rename_all = "snake_case")]
 enum PromptResponse {
     Access(AccessChoice),
+    TargetAccess(TargetAccessChoice),
     Auth(AuthPromptResult),
     Error(String),
 }
@@ -50,7 +61,32 @@ pub async fn ask_access(
     match invoke_child(request).await? {
         PromptResponse::Access(choice) => Ok(choice),
         PromptResponse::Error(message) => Err(Error::Prompt(message)),
-        PromptResponse::Auth(_) => Err(Error::Prompt("unexpected access prompt response".into())),
+        PromptResponse::TargetAccess(_) | PromptResponse::Auth(_) => {
+            Err(Error::Prompt("unexpected access prompt response".into()))
+        }
+    }
+}
+
+pub async fn ask_target_access(
+    provider: &str,
+    requested_target: &str,
+    requested_binding: &str,
+    active_targets: &[ActiveTargetAuthorization],
+    default_minutes: u32,
+) -> Result<TargetAccessChoice> {
+    let request = PromptRequest::TargetAccess {
+        provider: provider.into(),
+        requested_target: requested_target.into(),
+        requested_binding: requested_binding.into(),
+        active_targets: active_targets.to_vec(),
+        default_minutes,
+    };
+    match invoke_child(request).await? {
+        PromptResponse::TargetAccess(choice) => Ok(choice),
+        PromptResponse::Error(message) => Err(Error::Prompt(message)),
+        PromptResponse::Access(_) | PromptResponse::Auth(_) => Err(Error::Prompt(
+            "unexpected target access prompt response".into(),
+        )),
     }
 }
 
@@ -69,7 +105,7 @@ pub async fn ask_auth(
     match invoke_child(request).await? {
         PromptResponse::Auth(result) => Ok(result),
         PromptResponse::Error(message) => Err(Error::Prompt(message)),
-        PromptResponse::Access(_) => Err(Error::Prompt(
+        PromptResponse::Access(_) | PromptResponse::TargetAccess(_) => Err(Error::Prompt(
             "unexpected authentication prompt response".into(),
         )),
     }
@@ -122,6 +158,26 @@ pub fn run_child() -> i32 {
             let response = PromptResponse::Access(
                 access_window(provider, args, default_minutes).unwrap_or(AccessChoice::Deny),
             );
+            if serde_json::to_writer(std::io::stdout(), &response).is_ok() {
+                0
+            } else {
+                1
+            }
+        }
+        Ok(PromptRequest::TargetAccess {
+            provider,
+            requested_target,
+            requested_binding,
+            active_targets,
+            default_minutes,
+        }) => {
+            let response = PromptResponse::TargetAccess(target_access_window(
+                provider,
+                requested_target,
+                requested_binding,
+                active_targets,
+                default_minutes,
+            ));
             if serde_json::to_writer(std::io::stdout(), &response).is_ok() {
                 0
             } else {
@@ -963,6 +1019,453 @@ fn access_window(
     Ok(value)
 }
 
+const TARGET_ACCESS_WIDTH: f32 = 720.0;
+const TARGET_ACCESS_MIN_HEIGHT: f32 = 358.0;
+const TARGET_ACCESS_MAX_HEIGHT: f32 = 620.0;
+const TARGET_ACCESS_ACTIVE_ROW_HEIGHT: f32 = 30.0;
+const TARGET_ACCESS_WARNING_HEIGHT: f32 = 82.0;
+const TARGET_ACCESS_ACTIONS_HEIGHT: f32 = 38.0;
+const TARGET_ADD_HOLD_DURATION: Duration = Duration::from_secs(2);
+const TARGET_ADD_BUTTON_WIDTH: f32 = 214.0;
+const TARGET_WARNING_BG: egui::Color32 = egui::Color32::from_rgb(63, 31, 31);
+const TARGET_WARNING_STROKE: egui::Color32 = egui::Color32::from_rgb(224, 108, 117);
+const TARGET_HOLD_PROGRESS_BG: egui::Color32 = egui::Color32::from_rgb(77, 105, 58);
+
+#[derive(Default)]
+struct TargetAddHoldState {
+    started_at: Option<Instant>,
+    blocked_until_release: bool,
+    was_focused: bool,
+}
+
+struct TargetAccessApp {
+    provider: String,
+    requested_target: String,
+    requested_binding: String,
+    active_targets: Vec<ActiveTargetAuthorization>,
+    minutes: u32,
+    add_hold: TargetAddHoldState,
+    decision_since: Option<Instant>,
+    outcome: Rc<RefCell<Option<TargetAccessChoice>>>,
+}
+
+impl eframe::App for TargetAccessApp {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        let decision = *self.outcome.borrow();
+        if let Some(decision_since) = self.decision_since {
+            let elapsed = decision_since.elapsed();
+            if elapsed >= PROMPT_TERMINAL_VISIBLE_FOR {
+                close(ctx);
+            } else {
+                ctx.request_repaint_after(PROMPT_TERMINAL_VISIBLE_FOR - elapsed);
+            }
+        }
+        let decided = decision.is_some();
+        let now = epoch_seconds();
+        let active_after_add =
+            active_target_count_after_add(&self.active_targets, &self.requested_target, now);
+        let add_creates_multiple = active_after_add > 1;
+
+        egui::TopBottomPanel::bottom("target_access_status")
+            .resizable(false)
+            .exact_height(PROMPT_STATUS_BAR_HEIGHT)
+            .show_separator_line(false)
+            .frame(
+                egui::Frame::none()
+                    .fill(ctx.style().visuals.extreme_bg_color)
+                    .inner_margin(egui::Margin::symmetric(6.0, 0.0)),
+            )
+            .show(ctx, |ui| {
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    match decision {
+                        Some(TargetAccessChoice::Deny) => {
+                            ui.label(
+                                egui::RichText::new("Target negado.")
+                                    .color(PROMPT_ERROR_COLOR),
+                            );
+                        }
+                        Some(TargetAccessChoice::Replace { minutes }) => {
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "👍 Targets anteriores desativados; novo target autorizado por {minutes} min."
+                                ))
+                                .color(PROMPT_SUCCESS_COLOR),
+                            );
+                        }
+                        Some(TargetAccessChoice::Add { minutes }) => {
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "👍 Target adicionado por {minutes} min; os anteriores continuam ativos."
+                                ))
+                                .color(PROMPT_SUCCESS_COLOR),
+                            );
+                        }
+                        None => {
+                            ui.label("Revise os targets ativos antes de decidir.");
+                        }
+                    }
+                });
+            });
+
+        egui::TopBottomPanel::bottom("target_access_actions")
+            .resizable(false)
+            .exact_height(TARGET_ACCESS_ACTIONS_HEIGHT)
+            .show_separator_line(true)
+            .show(ctx, |ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.add_enabled_ui(!decided, |ui| {
+                        if ui.button("Negar").clicked() {
+                            self.finish_decision(ctx, TargetAccessChoice::Deny);
+                        }
+                    });
+                    if add_creates_multiple {
+                        let label = "Segure para adicionar";
+                        let response = ui
+                            .add_enabled(
+                                !decided,
+                                egui::Button::new(label)
+                                    .min_size(egui::vec2(
+                                        TARGET_ADD_BUTTON_WIDTH,
+                                        ui.spacing().interact_size.y,
+                                    ))
+                                    .sense(egui::Sense::click_and_drag()),
+                            )
+                            .on_hover_text(
+                                "Mantenha pressionado por 2 segundos para preservar os targets atuais e autorizar também o solicitado.",
+                            );
+                        let (pointer_down, focused) =
+                            ctx.input(|input| (input.pointer.primary_down(), input.focused));
+                        let pressing = !decided
+                            && response.is_pointer_button_down_on()
+                            && response.contains_pointer();
+                        let (progress, confirmed) = target_add_hold_update(
+                            &mut self.add_hold,
+                            pressing,
+                            pointer_down,
+                            focused,
+                            Instant::now(),
+                        );
+                        paint_target_add_progress(ui, &response, label, progress);
+                        if pressing {
+                            ctx.request_repaint_after(Duration::from_millis(16));
+                        }
+                        if confirmed {
+                            self.finish_decision(
+                                ctx,
+                                TargetAccessChoice::Add {
+                                    minutes: self.minutes,
+                                },
+                            );
+                        }
+                    } else {
+                        self.add_hold = TargetAddHoldState::default();
+                        if ui
+                            .add_enabled(
+                                !decided,
+                                egui::Button::new(format!("Adicionar por {} min", self.minutes)),
+                            )
+                            .on_hover_text(
+                                "Autoriza o target solicitado sem desativar autorizações existentes.",
+                            )
+                            .clicked()
+                        {
+                            self.finish_decision(
+                                ctx,
+                                TargetAccessChoice::Add {
+                                    minutes: self.minutes,
+                                },
+                            );
+                        }
+                    }
+                    ui.add_enabled_ui(!decided, |ui| {
+                        if ui
+                            .button(format!("Substituir por {} min", self.minutes))
+                            .on_hover_text(
+                                "Desativa todos os targets atuais deste provider e autoriza somente o solicitado.",
+                            )
+                            .clicked()
+                        {
+                            self.finish_decision(
+                                ctx,
+                                TargetAccessChoice::Replace {
+                                    minutes: self.minutes,
+                                },
+                            );
+                        }
+                    });
+                });
+            });
+
+        if add_creates_multiple {
+            egui::TopBottomPanel::bottom("target_access_warning")
+                .resizable(false)
+                .exact_height(TARGET_ACCESS_WARNING_HEIGHT)
+                .show_separator_line(false)
+                .frame(
+                    egui::Frame::none()
+                        .fill(ctx.style().visuals.panel_fill)
+                        .inner_margin(egui::Margin::symmetric(8.0, 4.0)),
+                )
+                .show(ctx, |ui| {
+                    let content_width = (ui.available_width() - 20.0).max(0.0);
+                    egui::Frame::none()
+                        .fill(TARGET_WARNING_BG)
+                        .stroke(egui::Stroke::new(1.0, TARGET_WARNING_STROKE))
+                        .inner_margin(egui::Margin::same(10.0))
+                        .show(ui, |ui| {
+                            ui.set_min_width(content_width);
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "ATENÇÃO: adicionar deixará {active_after_add} targets autorizados ao mesmo tempo."
+                                ))
+                                .strong()
+                                .color(PROMPT_ERROR_COLOR),
+                            );
+                            ui.label(
+                                "O agente poderá escolher qualquer um deles durante a validade de cada autorização.",
+                            );
+                            ui.label(
+                                egui::RichText::new(
+                                    "Para manter os atuais, segure o botão Adicionar por 2 segundos.",
+                                )
+                                .strong(),
+                            );
+                        });
+                });
+        }
+
+        egui::CentralPanel::default().show(ctx, |ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
+            ui.heading(format!(
+                "Torii — autorização de target ({})",
+                self.provider
+            ));
+            ui.label("O agente solicitou acesso temporário a outro target.");
+            ui.group(|ui| {
+                ui.set_min_width(ui.available_width());
+                ui.label(egui::RichText::new("Target solicitado").strong());
+                ui.label(
+                    egui::RichText::new(&self.requested_target)
+                        .monospace()
+                        .strong()
+                        .color(BOUNDARY_ACCENT),
+                );
+                ui.label(egui::RichText::new("Binding humano").small().strong());
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(&self.requested_binding).monospace(),
+                    )
+                    .wrap(),
+                );
+                ui.horizontal(|ui| {
+                    ui.label("Duração da autorização:");
+                    ui.add(egui::DragValue::new(&mut self.minutes).range(1..=1440));
+                    ui.label("minutos");
+                });
+            });
+
+            ui.label(egui::RichText::new("Targets autorizados agora").strong());
+            if self.active_targets.is_empty() {
+                ui.label("Nenhum target autorizado.");
+            } else {
+                ui.group(|ui| {
+                    ui.set_min_width(ui.available_width());
+                    egui::ScrollArea::vertical()
+                        .id_salt("active_target_authorizations")
+                        .max_height(180.0)
+                        .auto_shrink([false, true])
+                        .show(ui, |ui| {
+                            ui.set_min_width(ui.available_width());
+                            for (index, active) in self.active_targets.iter().enumerate() {
+                                if index > 0 {
+                                    ui.separator();
+                                }
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        egui::RichText::new(&active.target).monospace().strong(),
+                                    );
+                                    ui.label("·");
+                                    ui.label(target_expiration_label(
+                                        active.expires_at_epoch,
+                                        now,
+                                    ));
+                                    ui.add_space(8.0);
+                                    ui.add(
+                                        egui::Label::new(
+                                            egui::RichText::new(&active.display_binding)
+                                                .monospace()
+                                                .small(),
+                                        )
+                                        .wrap(),
+                                    );
+                                });
+                            }
+                        });
+                });
+            }
+
+            ui.separator();
+            ui.small(
+                "Substituir remove as autorizações atuais deste provider. Adicionar as preserva. A política do Jasper e os denies explícitos continuam valendo em cada target.",
+            );
+        });
+    }
+}
+
+impl TargetAccessApp {
+    fn finish_decision(&mut self, ctx: &egui::Context, decision: TargetAccessChoice) {
+        self.add_hold = TargetAddHoldState::default();
+        *self.outcome.borrow_mut() = Some(decision);
+        self.decision_since = Some(Instant::now());
+        ctx.request_repaint_after(PROMPT_TERMINAL_VISIBLE_FOR);
+    }
+}
+
+fn target_access_window(
+    provider: String,
+    requested_target: String,
+    requested_binding: String,
+    active_targets: Vec<ActiveTargetAuthorization>,
+    default_minutes: u32,
+) -> TargetAccessChoice {
+    let height = target_access_window_height(active_targets.len());
+    let outcome = Rc::new(RefCell::new(None));
+    let result = Rc::clone(&outcome);
+    let _ = eframe::run_native(
+        "Torii — autorização de target",
+        native_options(TARGET_ACCESS_WIDTH, height),
+        Box::new(move |_| {
+            Ok(Box::new(TargetAccessApp {
+                provider,
+                requested_target,
+                requested_binding,
+                active_targets,
+                minutes: default_minutes.clamp(1, 1440),
+                add_hold: TargetAddHoldState::default(),
+                decision_since: None,
+                outcome: result,
+            }))
+        }),
+    );
+    let choice = outcome.borrow().unwrap_or(TargetAccessChoice::Deny);
+    choice
+}
+
+fn target_access_window_height(active_count: usize) -> f32 {
+    let warning_height = if active_count == 0 {
+        0.0
+    } else {
+        TARGET_ACCESS_WARNING_HEIGHT
+    };
+    (TARGET_ACCESS_MIN_HEIGHT
+        + active_count.min(6) as f32 * TARGET_ACCESS_ACTIVE_ROW_HEIGHT
+        + warning_height)
+        .min(TARGET_ACCESS_MAX_HEIGHT)
+}
+
+fn target_add_hold_update(
+    state: &mut TargetAddHoldState,
+    pressing_button: bool,
+    pointer_down: bool,
+    focused: bool,
+    now: Instant,
+) -> (f32, bool) {
+    let lost_focus = state.was_focused && !focused;
+    state.was_focused = focused;
+    if lost_focus && state.started_at.is_some() {
+        state.started_at = None;
+        state.blocked_until_release = true;
+        return (0.0, false);
+    }
+    if !pointer_down {
+        state.started_at = None;
+        state.blocked_until_release = false;
+        return (0.0, false);
+    }
+    if state.blocked_until_release {
+        return (0.0, false);
+    }
+    if !pressing_button {
+        if state.started_at.take().is_some() {
+            state.blocked_until_release = true;
+        }
+        return (0.0, false);
+    }
+    let started_at = *state.started_at.get_or_insert(now);
+    let progress = (now.saturating_duration_since(started_at).as_secs_f32()
+        / TARGET_ADD_HOLD_DURATION.as_secs_f32())
+    .clamp(0.0, 1.0);
+    if progress >= 1.0 {
+        state.started_at = None;
+        state.blocked_until_release = true;
+        (1.0, true)
+    } else {
+        (progress, false)
+    }
+}
+
+fn paint_target_add_progress(ui: &egui::Ui, response: &egui::Response, label: &str, progress: f32) {
+    if progress <= 0.0 {
+        return;
+    }
+    let track = response.rect.shrink(2.0);
+    let fill = egui::Rect::from_min_max(
+        track.min,
+        egui::pos2(track.left() + track.width() * progress, track.bottom()),
+    );
+    let visuals = ui.style().interact(response);
+    let painter = ui.painter().with_clip_rect(track);
+    painter.rect_filled(fill, visuals.rounding, TARGET_HOLD_PROGRESS_BG);
+    painter.text(
+        response.rect.center(),
+        egui::Align2::CENTER_CENTER,
+        label,
+        egui::TextStyle::Button.resolve(ui.style()),
+        visuals.text_color(),
+    );
+}
+
+fn epoch_seconds() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+fn active_target_count_after_add(
+    active_targets: &[ActiveTargetAuthorization],
+    requested_target: &str,
+    now: u64,
+) -> usize {
+    let mut targets = active_targets
+        .iter()
+        .filter(|active| active.expires_at_epoch > now)
+        .map(|active| active.target.as_str())
+        .collect::<Vec<_>>();
+    targets.push(requested_target);
+    targets.sort_unstable();
+    targets.dedup();
+    targets.len()
+}
+
+fn target_expiration_label(expires_at_epoch: u64, now: u64) -> String {
+    let remaining = expires_at_epoch.saturating_sub(now);
+    if remaining == 0 {
+        return "expirada".into();
+    }
+    let minutes = remaining.div_ceil(60);
+    if minutes < 60 {
+        return format!("expira em {minutes} min");
+    }
+    let hours = minutes / 60;
+    let extra_minutes = minutes % 60;
+    if extra_minutes == 0 {
+        format!("expira em {hours} h")
+    } else {
+        format!("expira em {hours} h {extra_minutes} min")
+    }
+}
+
 struct AuthApp {
     provider: String,
     fields: Vec<AuthField>,
@@ -1360,5 +1863,187 @@ mod tests {
         );
         assert_eq!(serde_json::from_str::<String>(&second).unwrap(), "🦀🦀");
         assert!(bounded_token_preview(&value, 4).ends_with("…\""));
+    }
+
+    #[test]
+    fn adding_a_target_counts_only_distinct_unexpired_authorizations() {
+        let active = vec![
+            ActiveTargetAuthorization {
+                target: "dev".into(),
+                display_binding: "profile dev · conta 111122223333".into(),
+                expires_at_epoch: 200,
+            },
+            ActiveTargetAuthorization {
+                target: "dev".into(),
+                display_binding: "profile dev · conta 111122223333".into(),
+                expires_at_epoch: 250,
+            },
+            ActiveTargetAuthorization {
+                target: "expired".into(),
+                display_binding: "context cluster-antigo · lifecycle kube-auth".into(),
+                expires_at_epoch: 99,
+            },
+        ];
+
+        assert_eq!(active_target_count_after_add(&active, "dev", 100), 1);
+        assert_eq!(active_target_count_after_add(&active, "prod", 100), 2);
+    }
+
+    #[test]
+    fn target_access_private_prompt_payload_carries_human_bindings() {
+        let request = PromptRequest::TargetAccess {
+            provider: "aws_profile".into(),
+            requested_target: "prod".into(),
+            requested_binding: "profile cli-prd · conta 123456789012".into(),
+            active_targets: vec![ActiveTargetAuthorization {
+                target: "dev".into(),
+                display_binding: "profile cli-dev · conta 210987654321".into(),
+                expires_at_epoch: 200,
+            }],
+            default_minutes: 15,
+        };
+
+        let payload = serde_json::to_value(request).unwrap();
+        assert_eq!(payload["kind"], "target_access");
+        assert_eq!(
+            payload["requested_binding"],
+            "profile cli-prd · conta 123456789012"
+        );
+        assert_eq!(
+            payload["active_targets"][0]["display_binding"],
+            "profile cli-dev · conta 210987654321"
+        );
+    }
+
+    #[test]
+    fn target_expiration_is_presented_as_a_relative_duration() {
+        assert_eq!(target_expiration_label(100, 100), "expirada");
+        assert_eq!(target_expiration_label(101, 100), "expira em 1 min");
+        assert_eq!(target_expiration_label(3_701, 100), "expira em 1 h 1 min");
+    }
+
+    #[test]
+    fn target_access_window_height_is_bounded() {
+        assert_eq!(target_access_window_height(0), TARGET_ACCESS_MIN_HEIGHT);
+        assert_eq!(
+            target_access_window_height(1),
+            TARGET_ACCESS_MIN_HEIGHT
+                + TARGET_ACCESS_ACTIVE_ROW_HEIGHT
+                + TARGET_ACCESS_WARNING_HEIGHT
+        );
+        assert_eq!(
+            target_access_window_height(100),
+            TARGET_ACCESS_MIN_HEIGHT
+                + 6.0 * TARGET_ACCESS_ACTIVE_ROW_HEIGHT
+                + TARGET_ACCESS_WARNING_HEIGHT
+        );
+        assert!(target_access_window_height(100) <= TARGET_ACCESS_MAX_HEIGHT);
+    }
+
+    #[test]
+    fn target_add_hold_requires_two_continuous_seconds() {
+        let now = Instant::now();
+        let mut state = TargetAddHoldState::default();
+
+        assert_eq!(
+            target_add_hold_update(&mut state, true, true, true, now),
+            (0.0, false)
+        );
+        assert_eq!(
+            target_add_hold_update(
+                &mut state,
+                true,
+                true,
+                true,
+                now + TARGET_ADD_HOLD_DURATION / 2,
+            ),
+            (0.5, false)
+        );
+        assert!(
+            !target_add_hold_update(
+                &mut state,
+                true,
+                true,
+                true,
+                now + TARGET_ADD_HOLD_DURATION - Duration::from_millis(1),
+            )
+            .1
+        );
+        assert_eq!(
+            target_add_hold_update(&mut state, true, true, true, now + TARGET_ADD_HOLD_DURATION,),
+            (1.0, true)
+        );
+        assert_eq!(
+            target_add_hold_update(
+                &mut state,
+                true,
+                true,
+                true,
+                now + TARGET_ADD_HOLD_DURATION + Duration::from_secs(1),
+            ),
+            (0.0, false)
+        );
+    }
+
+    #[test]
+    fn target_add_hold_cancels_until_the_pointer_is_released() {
+        let now = Instant::now();
+        let mut state = TargetAddHoldState::default();
+
+        target_add_hold_update(&mut state, true, true, true, now);
+        assert_eq!(
+            target_add_hold_update(&mut state, false, true, true, now + Duration::from_secs(1),),
+            (0.0, false)
+        );
+        assert_eq!(
+            target_add_hold_update(&mut state, true, true, true, now + Duration::from_secs(5),),
+            (0.0, false)
+        );
+        target_add_hold_update(&mut state, false, false, true, now + Duration::from_secs(6));
+        assert_eq!(
+            target_add_hold_update(&mut state, true, true, true, now + Duration::from_secs(7),),
+            (0.0, false)
+        );
+    }
+
+    #[test]
+    fn target_add_hold_cancels_when_the_window_loses_focus() {
+        let now = Instant::now();
+        let mut state = TargetAddHoldState::default();
+
+        target_add_hold_update(&mut state, true, true, true, now);
+        assert_eq!(
+            target_add_hold_update(&mut state, true, true, false, now + Duration::from_secs(4),),
+            (0.0, false)
+        );
+        assert_eq!(
+            target_add_hold_update(&mut state, true, true, true, now + Duration::from_secs(5),),
+            (0.0, false)
+        );
+    }
+
+    #[test]
+    fn target_add_hold_starts_with_the_click_that_focuses_the_window() {
+        let now = Instant::now();
+        let mut state = TargetAddHoldState::default();
+
+        assert_eq!(
+            target_add_hold_update(&mut state, true, true, false, now),
+            (0.0, false)
+        );
+        assert_eq!(
+            target_add_hold_update(
+                &mut state,
+                true,
+                true,
+                true,
+                now + TARGET_ADD_HOLD_DURATION / 2,
+            ),
+            (0.5, false)
+        );
+        assert_eq!(
+            target_add_hold_update(&mut state, true, true, true, now + TARGET_ADD_HOLD_DURATION,),
+            (1.0, true)
+        );
     }
 }

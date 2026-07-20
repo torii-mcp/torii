@@ -25,6 +25,8 @@ pub enum Error {
     },
     #[error("invalid provider {provider}: {reason}")]
     InvalidProvider { provider: String, reason: String },
+    #[error("invalid target authorization state at {path}: {reason}")]
+    InvalidTargetAuthorizations { path: PathBuf, reason: String },
     #[error("duplicate provider tool name {0:?}")]
     DuplicateTool(String),
     #[error("duplicate provider name {0:?}")]
@@ -43,6 +45,16 @@ pub enum Error {
     },
     #[error("provider {provider:?} has no valid session; run `torii reauth {provider}`")]
     SessionInvalid { provider: String },
+    #[error("AWS profile target {target:?} needs human authentication; authenticate its configured AWS CLI profile and retry")]
+    AwsProfileAuthenticationRequired { target: String },
+    #[error("could not verify the active identity for target {target:?}; ask a human to authenticate the configured session and retry")]
+    IdentityCheckFailed { target: String },
+    #[error("target {target:?} expects identity {expected:?} but the active session is {actual:?}; authenticate the correct identity and retry")]
+    IdentityMismatch {
+        target: String,
+        expected: String,
+        actual: String,
+    },
     #[error("authentication for provider {0:?} was cancelled")]
     AuthCancelled(String),
     #[error("authentication strategy {strategy:?} is not implemented for provider {provider:?}")]

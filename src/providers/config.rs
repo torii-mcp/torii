@@ -27,23 +27,51 @@ pub struct TargetingConfig {
     pub locked_options: Vec<String>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TargetMode {
     KubectlContext,
+    AwsProfile,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TargetConfig {
     pub version: String,
     pub name: String,
-    pub context: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub region: Option<String>,
+    pub identity: TargetIdentity,
+}
+
+/// Where a target's credentials come from, and which identity they must carry.
+///
+/// `scope` is the credential bucket key. It defaults to the target name, so two
+/// targets of the same provider never share a session by accident; targets that
+/// genuinely want one session (same account, several clusters) opt in by naming
+/// the same scope.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TargetIdentity {
     pub provider: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expect: Option<String>,
+}
+
+impl TargetConfig {
+    pub fn credential_scope(&self) -> &str {
+        self.identity.scope.as_deref().unwrap_or(&self.name)
+    }
 }
 
 impl TargetingConfig {
     pub fn rejects_argument(&self, argument: &str) -> bool {
-        kubectl_locked_options()
+        self.mode
+            .locked_options()
             .iter()
             .copied()
             .chain(self.locked_options.iter().map(String::as_str))
@@ -53,6 +81,15 @@ impl TargetingConfig {
                         .strip_prefix(option)
                         .is_some_and(|rest| rest.starts_with('='))
             })
+    }
+}
+
+impl TargetMode {
+    fn locked_options(self) -> &'static [&'static str] {
+        match self {
+            Self::KubectlContext => kubectl_locked_options(),
+            Self::AwsProfile => aws_profile_locked_options(),
+        }
     }
 }
 
@@ -75,6 +112,17 @@ fn kubectl_locked_options() -> &'static [&'static str] {
         "--as-group",
         "--as-uid",
         "--as-user-extra",
+    ]
+}
+
+fn aws_profile_locked_options() -> &'static [&'static str] {
+    &[
+        "--profile",
+        "--region",
+        "--endpoint-url",
+        "--no-sign-request",
+        "--ca-bundle",
+        "--no-verify-ssl",
     ]
 }
 
@@ -133,6 +181,18 @@ pub struct AuthConfig {
     #[serde(default)]
     pub inject: AuthInject,
     pub validate: Option<CommandSpec>,
+    /// Probe that answers "whose credentials are these?". Targets compare its
+    /// result against `identity.expect`, which is what stops a live session for
+    /// one account from being used against a target bound to another.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity: Option<IdentityProbe>,
+    /// Name of the environment variable that carries a target's `profile`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_env: Option<String>,
+    /// Ambient variables that must never leak from the Torii server process into
+    /// an invocation authenticated by this provider.
+    #[serde(default)]
+    pub removed_env: Vec<String>,
     #[serde(default = "default_cache_ttl")]
     pub cache_ttl_seconds: u64,
 }
@@ -144,9 +204,25 @@ impl Default for AuthConfig {
             fields: Vec::new(),
             inject: AuthInject::default(),
             validate: None,
+            identity: None,
+            profile_env: None,
+            removed_env: Vec::new(),
             cache_ttl_seconds: default_cache_ttl(),
         }
     }
+}
+
+/// Runs under the *credential* provider's own command, never under the command
+/// of the provider being invoked.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IdentityProbe {
+    pub command: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+    /// Top-level JSON field of the probe's stdout holding the identity.
+    pub field: String,
+    #[serde(default = "default_cache_ttl")]
+    pub cache_ttl_seconds: u64,
 }
 
 fn default_cache_ttl() -> u64 {
@@ -221,4 +297,29 @@ impl Default for EnvironmentConfig {
 
 fn default_env_file() -> String {
     ".env".into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn aws_profile_rejects_identity_and_endpoint_overrides() {
+        let targeting = TargetingConfig {
+            mode: TargetMode::AwsProfile,
+            locked_options: Vec::new(),
+        };
+        for argument in [
+            "--profile",
+            "--profile=other",
+            "--region=us-east-1",
+            "--endpoint-url=http://localhost:4566",
+            "--no-sign-request",
+            "--ca-bundle=untrusted.pem",
+            "--no-verify-ssl",
+        ] {
+            assert!(targeting.rejects_argument(argument), "{argument}");
+        }
+        assert!(!targeting.rejects_argument("--output=json"));
+    }
 }

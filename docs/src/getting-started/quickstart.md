@@ -38,7 +38,10 @@ O setup aplica a política curada somente se rules ainda estiver vazio. Revise a
 
 ```powershell
 cargo run -- target add kubectl meu_dev --context meu-context-real --provider aws
+cargo run -- target activate kubectl meu_dev --for 30
 ```
+
+O alias é publicado no schema depois de reiniciar o MCP, mas começa inativo. `target activate` concede o lease humano necessário antes de grants, ambiente e autenticação. Sem `--add`, ele substitui qualquer outro alias ativo da tool.
 
 ## 5. Preparar uma sessão AWS
 

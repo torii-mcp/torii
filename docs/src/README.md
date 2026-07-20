@@ -28,6 +28,8 @@ O projeto separa dois mundos:
 - sessões coletadas pelo Torii são aplicadas somente ao processo filho;
 - cada provider instalado vira exatamente uma tool MCP;
 - targets são aliases cadastrados pelo humano, nunca contexts livres fornecidos pelo agente;
+- aliases target-aware começam inativos e exigem um lease humano temporário antes de grants, ambiente ou autenticação;
+- aliases `aws_profile` fixam profile e conta esperada fora do MCP e conferem a conta antes da execução;
 - decisões e exit codes são auditados sem registrar credenciais.
 
 ## O que o Torii não é
@@ -36,6 +38,6 @@ Torii não é um novo AWS CLI, um parser completo de Kubernetes, um daemon multi
 
 ## Estado da implementação
 
-A estratégia de autenticação `environment` está implementada e atende sessões temporárias AWS. `inherited` está implementada para providers que usam o ambiente ou credential store já isolado pelo operador. Os nomes `session_command` e `credential_file` fazem parte do schema, mas são recusados em runtime até que providers reais justifiquem suas implementações.
+A estratégia de autenticação `environment` está implementada e atende sessões temporárias AWS. `inherited` está implementada para providers que usam o ambiente ou credential store já isolado pelo operador; o modo `aws_profile` a combina com alias humano, remoção de overrides e verificação STS de conta. Os nomes `session_command` e `credential_file` fazem parte do schema, mas são recusados em runtime até que providers reais justifiquem suas implementações.
 
 Para colocar o servidor em funcionamento, siga [Instalação](getting-started/installation.md) e [Primeiros passos](getting-started/quickstart.md). Para entender as garantias antes de operar em um ambiente sensível, leia o [Modelo de segurança](concepts/security-model.md).

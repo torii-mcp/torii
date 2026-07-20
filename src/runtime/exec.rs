@@ -14,6 +14,34 @@ pub struct ExecutionResult {
     pub truncated: bool,
 }
 
+pub struct RunningCommand {
+    program: String,
+    child: tokio::process::Child,
+    max_output_bytes: usize,
+}
+
+impl RunningCommand {
+    pub async fn wait(self) -> Result<ExecutionResult> {
+        let output = self
+            .child
+            .wait_with_output()
+            .await
+            .map_err(|source| Error::Spawn {
+                program: self.program,
+                source,
+            })?;
+        let (stdout, stdout_cut) = bounded_text(&output.stdout, self.max_output_bytes);
+        let remaining = self.max_output_bytes.saturating_sub(stdout.len());
+        let (stderr, stderr_cut) = bounded_text(&output.stderr, remaining);
+        Ok(ExecutionResult {
+            exit_code: output.status.code().unwrap_or(SIGNAL_EXIT),
+            stdout,
+            stderr,
+            truncated: stdout_cut || stderr_cut,
+        })
+    }
+}
+
 pub async fn run_command(
     program: &str,
     args_prefix: &[String],
@@ -22,26 +50,68 @@ pub async fn run_command(
     auth_env: &[(String, String)],
     max_output_bytes: usize,
 ) -> Result<ExecutionResult> {
+    run_command_with_removed_env(
+        program,
+        args_prefix,
+        args,
+        persistent_env,
+        auth_env,
+        &[],
+        max_output_bytes,
+    )
+    .await
+}
+
+pub async fn run_command_with_removed_env(
+    program: &str,
+    args_prefix: &[String],
+    args: &[String],
+    persistent_env: &[(String, String)],
+    auth_env: &[(String, String)],
+    removed_env: &[&str],
+    max_output_bytes: usize,
+) -> Result<ExecutionResult> {
+    spawn_command_with_removed_env(
+        program,
+        args_prefix,
+        args,
+        persistent_env,
+        auth_env,
+        removed_env,
+        max_output_bytes,
+    )?
+    .wait()
+    .await
+}
+
+pub fn spawn_command_with_removed_env(
+    program: &str,
+    args_prefix: &[String],
+    args: &[String],
+    persistent_env: &[(String, String)],
+    auth_env: &[(String, String)],
+    removed_env: &[&str],
+    max_output_bytes: usize,
+) -> Result<RunningCommand> {
     let mut command = Command::new(program);
     command
         .args(args_prefix)
         .args(args)
         .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .kill_on_drop(true);
+    remove_environment(&mut command, removed_env);
     command.envs(persistent_env.iter().cloned());
     command.envs(auth_env.iter().cloned());
-    let output = command.output().await.map_err(|source| Error::Spawn {
+    let child = command.spawn().map_err(|source| Error::Spawn {
         program: program.to_string(),
         source,
     })?;
-    let (stdout, stdout_cut) = bounded_text(&output.stdout, max_output_bytes);
-    let remaining = max_output_bytes.saturating_sub(stdout.len());
-    let (stderr, stderr_cut) = bounded_text(&output.stderr, remaining);
-    Ok(ExecutionResult {
-        exit_code: output.status.code().unwrap_or(SIGNAL_EXIT),
-        stdout,
-        stderr,
-        truncated: stdout_cut || stderr_cut,
+    Ok(RunningCommand {
+        program: program.into(),
+        child,
+        max_output_bytes,
     })
 }
 
@@ -51,6 +121,16 @@ pub async fn validate_command(
     persistent_env: &[(String, String)],
     auth_env: &[(String, String)],
 ) -> Result<bool> {
+    validate_command_with_removed_env(program, args, persistent_env, auth_env, &[]).await
+}
+
+pub async fn validate_command_with_removed_env(
+    program: &str,
+    args: &[String],
+    persistent_env: &[(String, String)],
+    auth_env: &[(String, String)],
+    removed_env: &[&str],
+) -> Result<bool> {
     let mut command = Command::new(program);
     command
         .args(args)
@@ -58,6 +138,7 @@ pub async fn validate_command(
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .kill_on_drop(true);
+    remove_environment(&mut command, removed_env);
     command.envs(persistent_env.iter().cloned());
     command.envs(auth_env.iter().cloned());
     let status = command.status().await.map_err(|source| Error::Spawn {
@@ -93,6 +174,20 @@ fn bounded_text(bytes: &[u8], limit: usize) -> (String, bool) {
         end -= 1;
     }
     (String::from_utf8_lossy(&bytes[..end]).into_owned(), true)
+}
+
+fn remove_environment(command: &mut Command, removed_env: &[&str]) {
+    for name in removed_env {
+        command.env_remove(name);
+    }
+    if removed_env.contains(&"AWS_ENDPOINT_URL") {
+        for (name, _) in std::env::vars_os() {
+            let text = name.to_string_lossy();
+            if text.to_ascii_uppercase().starts_with("AWS_ENDPOINT_URL_") {
+                command.env_remove(name);
+            }
+        }
+    }
 }
 
 #[cfg(test)]

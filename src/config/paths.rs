@@ -64,18 +64,23 @@ impl ProviderPaths {
     pub fn grants(&self) -> PathBuf {
         self.base.join("grants")
     }
-    pub fn session_cache(&self) -> PathBuf {
-        self.base.join(".session-cache")
+    pub fn target_authorizations(&self) -> PathBuf {
+        self.base.join(".target-authorizations.yaml")
     }
-    pub fn auth_dir(&self) -> PathBuf {
-        self.base.join("auth")
+    pub fn target_authorizations_lock(&self) -> PathBuf {
+        self.base.join(".target-authorizations.lock")
     }
-    pub fn credentials(&self) -> PathBuf {
-        self.auth_dir().join("credentials.env")
+    pub fn identities_dir(&self) -> PathBuf {
+        self.base.join("identities")
+    }
+    /// Credential bucket for one scope. Sessions, credentials and the identity
+    /// cache all live here, so two scopes of the same provider stay independent.
+    pub fn identity_scope(&self, scope: &str) -> AuthPaths {
+        AuthPaths::new(self.identities_dir().join(scope))
     }
     pub fn ensure(&self) -> Result<()> {
         create_dir(&self.base)?;
-        create_dir(&self.auth_dir())
+        create_dir(&self.identities_dir())
     }
 
     pub fn targets_dir(&self) -> PathBuf {
@@ -84,10 +89,6 @@ impl ProviderPaths {
 
     pub fn target(&self, name: &str) -> TargetPaths {
         TargetPaths::new(self.targets_dir().join(name))
-    }
-
-    pub fn auth_paths(&self) -> AuthPaths {
-        AuthPaths::new(self.base.clone())
     }
 }
 
@@ -146,6 +147,10 @@ impl AuthPaths {
 
     pub fn session_cache(&self) -> PathBuf {
         self.base.join(".session-cache")
+    }
+
+    pub fn identity_cache(&self) -> PathBuf {
+        self.base.join(".identity-cache")
     }
 
     pub fn ensure(&self) -> Result<()> {

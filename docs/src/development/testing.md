@@ -28,6 +28,14 @@ Toda mudança no fluxo deve preservar testes para:
 - reauth inválido mantendo sessão antiga;
 - concorrência abrindo uma única coleta por escopo;
 - target obrigatório, desconhecido e flags de override recusadas antes de env/auth;
+- alias `aws_profile` mantendo profile e conta fora do schema MCP, removendo overrides e interrompendo antes do comando quando a identidade não confere;
+- target-aware inativo por padrão, embora todos os aliases permaneçam no enum MCP;
+- deny explícito em target inativo sem prompt de lease, grant, ambiente, autenticação ou processo;
+- lease ativo antes de grants/env/auth, expiração e revogação bloqueando a chamada nas rechecagens antes de sessão e launch;
+- `Replace`, `Add`, `Deny`, limites de 1 a 1.440 minutos, headless deny e CAS rejeitando uma decisão de janela obsoleta;
+- digest de binding invalidando lease após editar, remover ou recriar um alias;
+- `target clear` preservando grants, `.env`, cache, credenciais, `target.yaml` e processos já iniciados;
+- múltiplos aliases ativos permanecendo no schema; na janela, o alerta ocupa a largura disponível junto às ações e **Adicionar** só conclui depois de 2 segundos de pressão contínua, reiniciando ao soltar; o clique que traz uma janela sem foco para frente já inicia a contagem;
 - limite combinado de saída;
 - tools/list contendo uma tool por provider e nenhuma tool de controle.
 - pacote recusando rules base não vazio, setup recusando overwrite e update preservando rules/estado.
