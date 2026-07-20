@@ -376,7 +376,7 @@ fn token_detail_page(value: &str, page: usize) -> String {
 struct AccessApp {
     provider: String,
     args: Vec<String>,
-    aware: bool,
+    hold: HoldState,
     timed: bool,
     prefix: bool,
     prefix_len: usize,
@@ -438,14 +438,14 @@ impl eframe::App for AccessApp {
                                 .color(PROMPT_SUCCESS_COLOR),
                             );
                         }
-                        None if !self.aware => {
-                            ui.label("Revise a solicitação antes de decidir.");
-                        }
                         None if self.timed => {
-                            ui.label(format!("Pronto para permitir por {} min.", self.minutes));
+                            ui.label(format!(
+                                "Segure o botão para permitir por {} min.",
+                                self.minutes
+                            ));
                         }
                         None => {
-                            ui.label("Pronto para permitir uma vez.");
+                            ui.label("Segure o botão para permitir uma vez.");
                         }
                     },
                 );
@@ -456,57 +456,68 @@ impl eframe::App for AccessApp {
             .exact_height(28.0)
             .show_separator_line(true)
             .show(ctx, |ui| {
-                ui.allocate_ui_with_layout(
-                    ui.available_size(),
-                    egui::Layout::left_to_right(egui::Align::Center),
-                    |ui| {
-                        ui.add_enabled_ui(!decided, |ui| {
-                            ui.checkbox(
-                                &mut self.aware,
-                                "Revisei a invocação, o target e o escopo da permissão.",
-                            );
-                        });
-                        const ACTIONS_WIDTH: f32 = 205.0;
-                        ui.add_space((ui.available_width() - ACTIONS_WIDTH).max(0.0));
-                        ui.allocate_ui_with_layout(
-                            egui::vec2(ACTIONS_WIDTH, ui.available_height()),
-                            egui::Layout::right_to_left(egui::Align::Center),
-                            |ui| {
-                                ui.add_enabled_ui(self.aware && !decided, |ui| {
-                                    let label = if self.timed {
-                                        format!("Permitir por {} min", self.minutes)
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.add_enabled_ui(!decided, |ui| {
+                        if ui.button("Negar").clicked() {
+                            self.finish_decision(ctx, AccessChoice::Deny);
+                        }
+                    });
+                    // Press-and-hold to confirm: the deliberate 2s gesture replaces
+                    // the old "I reviewed this" checkbox as the confirmation gate.
+                    let label = if self.timed {
+                        format!("Segure para permitir por {} min", self.minutes)
+                    } else {
+                        "Segure para permitir uma vez".to_string()
+                    };
+                    let response = ui
+                        .add_enabled(
+                            !decided,
+                            egui::Button::new(&label)
+                                .min_size(egui::vec2(
+                                    ALLOW_HOLD_BUTTON_WIDTH,
+                                    ui.spacing().interact_size.y,
+                                ))
+                                .sense(egui::Sense::click_and_drag()),
+                        )
+                        .on_hover_text(
+                            "Mantenha pressionado por 2 segundos para revisar e confirmar a permissão.",
+                        );
+                    let (pointer_down, focused) =
+                        ctx.input(|input| (input.pointer.primary_down(), input.focused));
+                    let pressing = !decided
+                        && response.is_pointer_button_down_on()
+                        && response.contains_pointer();
+                    let (progress, confirmed) = hold_update(
+                        &mut self.hold,
+                        pressing,
+                        pointer_down,
+                        focused,
+                        Instant::now(),
+                    );
+                    paint_hold_progress(ui, &response, &label, progress);
+                    if pressing {
+                        ctx.request_repaint_after(Duration::from_millis(16));
+                    }
+                    if confirmed {
+                        self.finish_decision(
+                            ctx,
+                            if self.timed {
+                                AccessChoice::AllowFor {
+                                    minutes: self.minutes,
+                                    selection: if self.prefix {
+                                        GrantSelection::Prefix {
+                                            token_count: self.prefix_len,
+                                        }
                                     } else {
-                                        "Permitir uma vez".into()
-                                    };
-                                    if ui.button(label).clicked() {
-                                        self.finish_decision(
-                                            ctx,
-                                            if self.timed {
-                                                AccessChoice::AllowFor {
-                                                    minutes: self.minutes,
-                                                    selection: if self.prefix {
-                                                        GrantSelection::Prefix {
-                                                            token_count: self.prefix_len,
-                                                        }
-                                                    } else {
-                                                        GrantSelection::Exact
-                                                    },
-                                                }
-                                            } else {
-                                                AccessChoice::AllowOnce
-                                            },
-                                        );
-                                    }
-                                });
-                                ui.add_enabled_ui(!decided, |ui| {
-                                    if ui.button("Negar").clicked() {
-                                        self.finish_decision(ctx, AccessChoice::Deny);
-                                    }
-                                });
+                                        GrantSelection::Exact
+                                    },
+                                }
+                            } else {
+                                AccessChoice::AllowOnce
                             },
                         );
-                    },
-                );
+                    }
+                });
             });
 
         egui::TopBottomPanel::bottom("access_scope_summary")
@@ -586,7 +597,7 @@ impl eframe::App for AccessApp {
                 .radio_value(&mut self.timed, true, "Temporariamente")
                 .changed();
             if once_changed || temporary_changed {
-                self.aware = false;
+                self.hold = HoldState::default();
             }
             if temporary_changed {
                 if let Some(suggested) = self.suggested_prefix_len {
@@ -635,7 +646,7 @@ impl eframe::App for AccessApp {
                         }
                     }
                     if exact_changed || prefix_changed {
-                        self.aware = false;
+                        self.hold = HoldState::default();
                     }
                     if self.prefix {
                         if let Some(suggested) = self.suggested_prefix_len {
@@ -651,7 +662,7 @@ impl eframe::App for AccessApp {
                                     ));
                                     if ui.button("Restaurar sugestão").clicked() {
                                         self.prefix_len = suggested;
-                                        self.aware = false;
+                                        self.hold = HoldState::default();
                                     }
                                 });
                             }
@@ -679,7 +690,7 @@ impl eframe::App for AccessApp {
                                 .clicked()
                             {
                                 self.prefix_len -= 1;
-                                self.aware = false;
+                                self.hold = HoldState::default();
                             }
                             ui.label(format!(
                                 "{} de {} argumentos fixos",
@@ -694,7 +705,7 @@ impl eframe::App for AccessApp {
                                 .clicked()
                             {
                                 self.prefix_len += 1;
-                                self.aware = false;
+                                self.hold = HoldState::default();
                             }
                         });
                         let fixed_long = self
@@ -717,7 +728,7 @@ impl eframe::App for AccessApp {
                         .add(egui::DragValue::new(&mut self.minutes).range(1..=1440))
                         .changed()
                     {
-                        self.aware = false;
+                        self.hold = HoldState::default();
                     }
                     ui.label("minutos");
                 });
@@ -756,6 +767,7 @@ impl AccessApp {
     }
 
     fn finish_decision(&mut self, ctx: &egui::Context, decision: AccessChoice) {
+        self.hold = HoldState::default();
         *self.outcome.borrow_mut() = Some(decision);
         self.decision_since = Some(Instant::now());
         ctx.request_repaint_after(PROMPT_TERMINAL_VISIBLE_FOR);
@@ -880,7 +892,7 @@ impl AccessApp {
         });
         if selectable && response.clicked() {
             self.prefix_len = index + 1;
-            self.aware = false;
+            self.hold = HoldState::default();
         }
     }
 
@@ -998,7 +1010,7 @@ fn access_window(
                 provider,
                 prefix_len: args.len().max(1),
                 args,
-                aware: false,
+                hold: HoldState::default(),
                 timed: false,
                 prefix: false,
                 suggested_prefix_len,
@@ -1025,14 +1037,15 @@ const TARGET_ACCESS_MAX_HEIGHT: f32 = 620.0;
 const TARGET_ACCESS_ACTIVE_ROW_HEIGHT: f32 = 30.0;
 const TARGET_ACCESS_WARNING_HEIGHT: f32 = 82.0;
 const TARGET_ACCESS_ACTIONS_HEIGHT: f32 = 38.0;
-const TARGET_ADD_HOLD_DURATION: Duration = Duration::from_secs(2);
+const HOLD_DURATION: Duration = Duration::from_secs(2);
 const TARGET_ADD_BUTTON_WIDTH: f32 = 214.0;
+const ALLOW_HOLD_BUTTON_WIDTH: f32 = 232.0;
 const TARGET_WARNING_BG: egui::Color32 = egui::Color32::from_rgb(63, 31, 31);
 const TARGET_WARNING_STROKE: egui::Color32 = egui::Color32::from_rgb(224, 108, 117);
-const TARGET_HOLD_PROGRESS_BG: egui::Color32 = egui::Color32::from_rgb(77, 105, 58);
+const HOLD_PROGRESS_BG: egui::Color32 = egui::Color32::from_rgb(77, 105, 58);
 
 #[derive(Default)]
-struct TargetAddHoldState {
+struct HoldState {
     started_at: Option<Instant>,
     blocked_until_release: bool,
     was_focused: bool,
@@ -1044,7 +1057,7 @@ struct TargetAccessApp {
     requested_binding: String,
     active_targets: Vec<ActiveTargetAuthorization>,
     minutes: u32,
-    add_hold: TargetAddHoldState,
+    add_hold: HoldState,
     decision_since: Option<Instant>,
     outcome: Rc<RefCell<Option<TargetAccessChoice>>>,
 }
@@ -1113,78 +1126,94 @@ impl eframe::App for TargetAccessApp {
             .show_separator_line(true)
             .show(ctx, |ui| {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    // With nothing active, "replace" and "add" collapse into a
+                    // single "authorize" action, so the Add button is hidden and
+                    // the remaining button is relabelled.
+                    let no_active = self.active_targets.is_empty();
                     ui.add_enabled_ui(!decided, |ui| {
                         if ui.button("Negar").clicked() {
                             self.finish_decision(ctx, TargetAccessChoice::Deny);
                         }
                     });
-                    if add_creates_multiple {
-                        let label = "Segure para adicionar";
-                        let response = ui
-                            .add_enabled(
-                                !decided,
-                                egui::Button::new(label)
-                                    .min_size(egui::vec2(
-                                        TARGET_ADD_BUTTON_WIDTH,
-                                        ui.spacing().interact_size.y,
-                                    ))
-                                    .sense(egui::Sense::click_and_drag()),
-                            )
-                            .on_hover_text(
-                                "Mantenha pressionado por 2 segundos para preservar os targets atuais e autorizar também o solicitado.",
+                    if !no_active {
+                        if add_creates_multiple {
+                            let label = "Segure para adicionar";
+                            let response = ui
+                                .add_enabled(
+                                    !decided,
+                                    egui::Button::new(label)
+                                        .min_size(egui::vec2(
+                                            TARGET_ADD_BUTTON_WIDTH,
+                                            ui.spacing().interact_size.y,
+                                        ))
+                                        .sense(egui::Sense::click_and_drag()),
+                                )
+                                .on_hover_text(
+                                    "Mantenha pressionado por 2 segundos para preservar os targets atuais e autorizar também o solicitado.",
+                                );
+                            let (pointer_down, focused) =
+                                ctx.input(|input| (input.pointer.primary_down(), input.focused));
+                            let pressing = !decided
+                                && response.is_pointer_button_down_on()
+                                && response.contains_pointer();
+                            let (progress, confirmed) = hold_update(
+                                &mut self.add_hold,
+                                pressing,
+                                pointer_down,
+                                focused,
+                                Instant::now(),
                             );
-                        let (pointer_down, focused) =
-                            ctx.input(|input| (input.pointer.primary_down(), input.focused));
-                        let pressing = !decided
-                            && response.is_pointer_button_down_on()
-                            && response.contains_pointer();
-                        let (progress, confirmed) = target_add_hold_update(
-                            &mut self.add_hold,
-                            pressing,
-                            pointer_down,
-                            focused,
-                            Instant::now(),
-                        );
-                        paint_target_add_progress(ui, &response, label, progress);
-                        if pressing {
-                            ctx.request_repaint_after(Duration::from_millis(16));
-                        }
-                        if confirmed {
-                            self.finish_decision(
-                                ctx,
-                                TargetAccessChoice::Add {
-                                    minutes: self.minutes,
-                                },
-                            );
+                            paint_hold_progress(ui, &response, label, progress);
+                            if pressing {
+                                ctx.request_repaint_after(Duration::from_millis(16));
+                            }
+                            if confirmed {
+                                self.finish_decision(
+                                    ctx,
+                                    TargetAccessChoice::Add {
+                                        minutes: self.minutes,
+                                    },
+                                );
+                            }
+                        } else {
+                            self.add_hold = HoldState::default();
+                            if ui
+                                .add_enabled(
+                                    !decided,
+                                    egui::Button::new(format!(
+                                        "Adicionar por {} min",
+                                        self.minutes
+                                    )),
+                                )
+                                .on_hover_text(
+                                    "Autoriza o target solicitado sem desativar autorizações existentes.",
+                                )
+                                .clicked()
+                            {
+                                self.finish_decision(
+                                    ctx,
+                                    TargetAccessChoice::Add {
+                                        minutes: self.minutes,
+                                    },
+                                );
+                            }
                         }
                     } else {
-                        self.add_hold = TargetAddHoldState::default();
-                        if ui
-                            .add_enabled(
-                                !decided,
-                                egui::Button::new(format!("Adicionar por {} min", self.minutes)),
-                            )
-                            .on_hover_text(
-                                "Autoriza o target solicitado sem desativar autorizações existentes.",
-                            )
-                            .clicked()
-                        {
-                            self.finish_decision(
-                                ctx,
-                                TargetAccessChoice::Add {
-                                    minutes: self.minutes,
-                                },
-                            );
-                        }
+                        self.add_hold = HoldState::default();
                     }
                     ui.add_enabled_ui(!decided, |ui| {
-                        if ui
-                            .button(format!("Substituir por {} min", self.minutes))
-                            .on_hover_text(
+                        let (label, hover) = if no_active {
+                            (
+                                format!("Autorizar por {} min", self.minutes),
+                                "Autoriza o target solicitado.",
+                            )
+                        } else {
+                            (
+                                format!("Substituir por {} min", self.minutes),
                                 "Desativa todos os targets atuais deste provider e autoriza somente o solicitado.",
                             )
-                            .clicked()
-                        {
+                        };
+                        if ui.button(label).on_hover_text(hover).clicked() {
                             self.finish_decision(
                                 ctx,
                                 TargetAccessChoice::Replace {
@@ -1305,16 +1334,18 @@ impl eframe::App for TargetAccessApp {
             }
 
             ui.separator();
-            ui.small(
-                "Substituir remove as autorizações atuais deste provider. Adicionar as preserva. A política do Jasper e os denies explícitos continuam valendo em cada target.",
-            );
+            ui.small(if self.active_targets.is_empty() {
+                "Autorizar concede um lease temporário a este target. A política do Jasper e os denies explícitos continuam valendo em cada target."
+            } else {
+                "Substituir remove as autorizações atuais deste provider. Adicionar as preserva. A política do Jasper e os denies explícitos continuam valendo em cada target."
+            });
         });
     }
 }
 
 impl TargetAccessApp {
     fn finish_decision(&mut self, ctx: &egui::Context, decision: TargetAccessChoice) {
-        self.add_hold = TargetAddHoldState::default();
+        self.add_hold = HoldState::default();
         *self.outcome.borrow_mut() = Some(decision);
         self.decision_since = Some(Instant::now());
         ctx.request_repaint_after(PROMPT_TERMINAL_VISIBLE_FOR);
@@ -1341,7 +1372,7 @@ fn target_access_window(
                 requested_binding,
                 active_targets,
                 minutes: default_minutes.clamp(1, 1440),
-                add_hold: TargetAddHoldState::default(),
+                add_hold: HoldState::default(),
                 decision_since: None,
                 outcome: result,
             }))
@@ -1363,8 +1394,8 @@ fn target_access_window_height(active_count: usize) -> f32 {
         .min(TARGET_ACCESS_MAX_HEIGHT)
 }
 
-fn target_add_hold_update(
-    state: &mut TargetAddHoldState,
+fn hold_update(
+    state: &mut HoldState,
     pressing_button: bool,
     pointer_down: bool,
     focused: bool,
@@ -1393,7 +1424,7 @@ fn target_add_hold_update(
     }
     let started_at = *state.started_at.get_or_insert(now);
     let progress = (now.saturating_duration_since(started_at).as_secs_f32()
-        / TARGET_ADD_HOLD_DURATION.as_secs_f32())
+        / HOLD_DURATION.as_secs_f32())
     .clamp(0.0, 1.0);
     if progress >= 1.0 {
         state.started_at = None;
@@ -1404,7 +1435,7 @@ fn target_add_hold_update(
     }
 }
 
-fn paint_target_add_progress(ui: &egui::Ui, response: &egui::Response, label: &str, progress: f32) {
+fn paint_hold_progress(ui: &egui::Ui, response: &egui::Response, label: &str, progress: f32) {
     if progress <= 0.0 {
         return;
     }
@@ -1415,7 +1446,7 @@ fn paint_target_add_progress(ui: &egui::Ui, response: &egui::Response, label: &s
     );
     let visuals = ui.style().interact(response);
     let painter = ui.painter().with_clip_rect(track);
-    painter.rect_filled(fill, visuals.rounding, TARGET_HOLD_PROGRESS_BG);
+    painter.rect_filled(fill, visuals.rounding, HOLD_PROGRESS_BG);
     painter.text(
         response.rect.center(),
         egui::Align2::CENTER_CENTER,
@@ -1943,43 +1974,43 @@ mod tests {
     #[test]
     fn target_add_hold_requires_two_continuous_seconds() {
         let now = Instant::now();
-        let mut state = TargetAddHoldState::default();
+        let mut state = HoldState::default();
 
         assert_eq!(
-            target_add_hold_update(&mut state, true, true, true, now),
+            hold_update(&mut state, true, true, true, now),
             (0.0, false)
         );
         assert_eq!(
-            target_add_hold_update(
+            hold_update(
                 &mut state,
                 true,
                 true,
                 true,
-                now + TARGET_ADD_HOLD_DURATION / 2,
+                now + HOLD_DURATION / 2,
             ),
             (0.5, false)
         );
         assert!(
-            !target_add_hold_update(
+            !hold_update(
                 &mut state,
                 true,
                 true,
                 true,
-                now + TARGET_ADD_HOLD_DURATION - Duration::from_millis(1),
+                now + HOLD_DURATION - Duration::from_millis(1),
             )
             .1
         );
         assert_eq!(
-            target_add_hold_update(&mut state, true, true, true, now + TARGET_ADD_HOLD_DURATION,),
+            hold_update(&mut state, true, true, true, now + HOLD_DURATION,),
             (1.0, true)
         );
         assert_eq!(
-            target_add_hold_update(
+            hold_update(
                 &mut state,
                 true,
                 true,
                 true,
-                now + TARGET_ADD_HOLD_DURATION + Duration::from_secs(1),
+                now + HOLD_DURATION + Duration::from_secs(1),
             ),
             (0.0, false)
         );
@@ -1988,20 +2019,20 @@ mod tests {
     #[test]
     fn target_add_hold_cancels_until_the_pointer_is_released() {
         let now = Instant::now();
-        let mut state = TargetAddHoldState::default();
+        let mut state = HoldState::default();
 
-        target_add_hold_update(&mut state, true, true, true, now);
+        hold_update(&mut state, true, true, true, now);
         assert_eq!(
-            target_add_hold_update(&mut state, false, true, true, now + Duration::from_secs(1),),
+            hold_update(&mut state, false, true, true, now + Duration::from_secs(1),),
             (0.0, false)
         );
         assert_eq!(
-            target_add_hold_update(&mut state, true, true, true, now + Duration::from_secs(5),),
+            hold_update(&mut state, true, true, true, now + Duration::from_secs(5),),
             (0.0, false)
         );
-        target_add_hold_update(&mut state, false, false, true, now + Duration::from_secs(6));
+        hold_update(&mut state, false, false, true, now + Duration::from_secs(6));
         assert_eq!(
-            target_add_hold_update(&mut state, true, true, true, now + Duration::from_secs(7),),
+            hold_update(&mut state, true, true, true, now + Duration::from_secs(7),),
             (0.0, false)
         );
     }
@@ -2009,15 +2040,15 @@ mod tests {
     #[test]
     fn target_add_hold_cancels_when_the_window_loses_focus() {
         let now = Instant::now();
-        let mut state = TargetAddHoldState::default();
+        let mut state = HoldState::default();
 
-        target_add_hold_update(&mut state, true, true, true, now);
+        hold_update(&mut state, true, true, true, now);
         assert_eq!(
-            target_add_hold_update(&mut state, true, true, false, now + Duration::from_secs(4),),
+            hold_update(&mut state, true, true, false, now + Duration::from_secs(4),),
             (0.0, false)
         );
         assert_eq!(
-            target_add_hold_update(&mut state, true, true, true, now + Duration::from_secs(5),),
+            hold_update(&mut state, true, true, true, now + Duration::from_secs(5),),
             (0.0, false)
         );
     }
@@ -2025,24 +2056,24 @@ mod tests {
     #[test]
     fn target_add_hold_starts_with_the_click_that_focuses_the_window() {
         let now = Instant::now();
-        let mut state = TargetAddHoldState::default();
+        let mut state = HoldState::default();
 
         assert_eq!(
-            target_add_hold_update(&mut state, true, true, false, now),
+            hold_update(&mut state, true, true, false, now),
             (0.0, false)
         );
         assert_eq!(
-            target_add_hold_update(
+            hold_update(
                 &mut state,
                 true,
                 true,
                 true,
-                now + TARGET_ADD_HOLD_DURATION / 2,
+                now + HOLD_DURATION / 2,
             ),
             (0.5, false)
         );
         assert_eq!(
-            target_add_hold_update(&mut state, true, true, true, now + TARGET_ADD_HOLD_DURATION,),
+            hold_update(&mut state, true, true, true, now + HOLD_DURATION,),
             (1.0, true)
         );
     }
