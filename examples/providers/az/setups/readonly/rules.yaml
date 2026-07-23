@@ -1,0 +1,96 @@
+version: "1.0"
+
+# Política inicial curada para a Azure CLI. Privilegia descoberta e leitura de
+# recursos. O matching é por token inteiro com semântica de prefixo, então um
+# accept "keyvault secret list" nunca alcança "keyvault secret show". Revise
+# conforme a classificação de dados da sua assinatura.
+
+deny:
+  # Emissão de credencial / token — o equivalente Azure a ecr get-login-password.
+  - "account get-access-token"
+  - "aks get-credentials"
+  - "acr login"
+  - "acr credential show"
+  - "webapp deployment list-publishing-credentials"
+  - "functionapp deployment list-publishing-credentials"
+  - "storage account keys list"
+  - "storage account show-connection-string"
+  - "ad sp credential reset"
+  - "ad app credential reset"
+
+  # Leitura de segredo/chave/certificado (o valor, não os metadados).
+  - "keyvault secret show"
+  - "keyvault secret download"
+  - "keyvault key download"
+  - "keyvault certificate download"
+
+  # Execução remota e canais que escapam da curadoria.
+  - "vm run-command invoke"
+  - "ssh vm"
+  - "rest"
+  - "interactive"
+
+accept:
+  - "account show"
+  - "account list"
+  - "account list-locations"
+
+  - "group list"
+  - "group show"
+
+  - "resource list"
+  - "resource show"
+
+  - "vm list"
+  - "vm show"
+  - "vm get-instance-view"
+  - "vm list-sizes"
+  - "vmss list"
+  - "vmss show"
+  - "disk list"
+  - "disk show"
+
+  - "network vnet list"
+  - "network vnet show"
+  - "network nsg list"
+  - "network nsg show"
+  - "network nsg rule list"
+  - "network public-ip list"
+  - "network public-ip show"
+  - "network lb list"
+  - "network lb show"
+
+  # Storage: apenas metadados. Chaves e connection strings ficam no deny.
+  - "storage account list"
+  - "storage account show"
+
+  - "aks list"
+  - "aks show"
+  - "aks nodepool list"
+
+  - "acr list"
+  - "acr show"
+  - "acr repository list"
+  - "acr repository show-tags"
+
+  - "webapp list"
+  - "webapp show"
+  - "webapp config show"
+  - "functionapp list"
+  - "functionapp show"
+
+  # Key Vault: metadados do cofre e nomes dos segredos, nunca os valores.
+  - "keyvault list"
+  - "keyvault show"
+  - "keyvault secret list"
+
+  - "role assignment list"
+  - "role definition list"
+  - "policy assignment list"
+  - "policy definition list"
+
+  - "monitor metrics list"
+  - "monitor log-analytics workspace list"
+  - "monitor log-analytics workspace show"
+
+  - "tag list"

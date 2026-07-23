@@ -15,6 +15,8 @@ Uma regra é dividida por whitespace. Ela casa quando seus tokens são o prefixo
 
 O algoritmo compara tokens inteiros. Não há prefixo textual parcial.
 
+Uma regra delimitada por `/…/flags` é avaliada como regex sobre o argv inteiro e casa em qualquer posição, para inspecionar conteúdo (ex.: palavras destrutivas numa query inline). Antes das regras, `forbidden_args` nega argumentos que abrem canais não inspecionáveis (arquivo, stdin) e `ignore_args` remove ruído de formatação da avaliação. Veja [Escrever políticas](../guides/policies.md) e o [schema de provider](../reference/provider-schema.md).
+
 ## Largura mínima de accept
 
 Cada provider define `minimum_accept_tokens`. AWS usa `2`, impedindo um accept amplo como `s3`. Kubernetes usa `1`, permitindo verbos como `logs`.

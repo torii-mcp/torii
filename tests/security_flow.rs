@@ -474,6 +474,110 @@ async fn successful_preflight_runs_before_the_target_provider() {
     assert!(!audit.contains(" | ran | "));
 }
 
+/// Non-target provider with an inherited session and the generalized matching
+/// features (forbidden_args, ignore_args, regex rules). Inherited auth reaches
+/// the spawn on an allow, so an allowed call fails with the sentinel command.
+fn query_fixture(rules: &str) -> (TempDir, ConfigPaths, ProviderRegistry) {
+    let temp = TempDir::new().unwrap();
+    let paths = ConfigPaths::new(temp.path().to_path_buf());
+    let provider = paths.provider("query");
+    provider.ensure().unwrap();
+    fs::write(
+        provider.config(),
+        r#"
+version: "1"
+name: query
+tool: query
+description: query-mode test provider
+command: executable-that-must-not-run
+policy:
+  minimum_accept_tokens: 1
+  forbidden_args: ["-f", "--filename", "-i", "--stdin"]
+  ignore_args:
+    leading: 0
+    flags: ["--format", "-o"]
+auth: { strategy: inherited }
+environment: { file: .env }
+"#,
+    )
+    .unwrap();
+    fs::write(provider.rules(), rules).unwrap();
+    let registry = ProviderRegistry::load(&paths).unwrap();
+    (temp, paths, registry)
+}
+
+#[tokio::test]
+async fn forbidden_argument_is_denied_before_spawn() {
+    let (_temp, paths, registry) = query_fixture("version: '1.0'\ndeny: []\naccept: ['sql -q']\n");
+    let result = Invoker::new(paths.clone(), Settings::default(), registry)
+        .invoke(
+            "query",
+            None,
+            &["sql".into(), "--filename".into(), "x.sql".into()],
+        )
+        .await
+        .unwrap();
+    assert_eq!(result.decision.result, DecisionResult::Deny);
+    assert_eq!(result.decision.source, "forbidden-arg");
+    assert!(result.execution.is_none());
+    let audit = fs::read_to_string(paths.log()).unwrap();
+    assert!(audit.contains("denied-forbidden-arg"));
+}
+
+#[tokio::test]
+async fn regex_deny_wins_over_a_broad_literal_accept() {
+    let (_temp, paths, registry) =
+        query_fixture("version: '1.0'\ndeny: ['/\\btruncate\\b/i']\naccept: ['sql -q']\n");
+    let result = Invoker::new(paths, Settings::default(), registry)
+        .invoke(
+            "query",
+            None,
+            &["sql".into(), "-q".into(), "select 1; truncate t".into()],
+        )
+        .await
+        .unwrap();
+    assert_eq!(result.decision.result, DecisionResult::Deny);
+    assert_eq!(result.decision.source, "explicit-deny");
+    assert!(result.execution.is_none());
+}
+
+#[tokio::test]
+async fn broad_accept_allows_and_ignored_flags_do_not_block() {
+    // A read query is allowed; the ignored `--format json` does not affect the
+    // match. Inherited auth then reaches the spawn, which fails on the sentinel.
+    let (_temp, paths, registry) = query_fixture("version: '1.0'\ndeny: []\naccept: ['sql -q']\n");
+    let error = Invoker::new(paths, Settings::default(), registry)
+        .invoke(
+            "query",
+            None,
+            &[
+                "sql".into(),
+                "-q".into(),
+                "select 1".into(),
+                "--format".into(),
+                "json".into(),
+            ],
+        )
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("executable-that-must-not-run"));
+}
+
+#[tokio::test]
+async fn malformed_regex_rule_fails_closed() {
+    let (_temp, paths, registry) =
+        query_fixture("version: '1.0'\ndeny: ['/(unclosed/']\naccept: ['sql -q']\n");
+    let error = Invoker::new(paths, Settings::default(), registry)
+        .invoke(
+            "query",
+            None,
+            &["sql".into(), "-q".into(), "select 1".into()],
+        )
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("invalid rule"));
+}
+
 #[tokio::test]
 async fn inherited_provider_without_validation_is_audited_as_unchecked() {
     let temp = TempDir::new().unwrap();

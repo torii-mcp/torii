@@ -1,0 +1,12 @@
+version: "1"
+name: snow
+package_version: "0.1.0"
+description: Snowflake CLI com inspeção de query por regex e setup de leitura curado.
+provider: provider.yaml
+rules: rules.yaml
+environment: env.example
+setups:
+  - name: readonly
+    kind: readonly
+    description: Consultas de leitura via sql -q; nega DDL/DML e canais não inspecionáveis.
+    rules: setups/readonly/rules.yaml

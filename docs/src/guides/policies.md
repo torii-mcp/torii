@@ -22,6 +22,20 @@ Adicione somente operações observadas e necessárias. A ausência de uma opera
 
 Bloqueie comandos que abrem execução arbitrária, túneis, proxies ou leitura direta de segredos. Deny vence mesmo se uma regra accept mais ampla também casar.
 
+## Regras por regex
+
+Uma regra delimitada por `/…/flags` é tratada como regex e casa em **qualquer posição** do argv (não só no prefixo). Serve para inspecionar conteúdo — por exemplo, negar palavras destrutivas dentro de uma query SQL inline:
+
+```yaml
+deny:
+  - "/\\btruncate\\b/i"
+  - "/copy\\s+into/i"
+```
+
+O padrão é tudo entre a primeira e a última barra; o trecho final são as flags (`i` case-insensitive, `m` multi-line, `s` dot-matches-newline, `x` ignore-whitespace). Regras regex não estão sujeitas a `minimum_accept_tokens`. Um regex inválido faz a avaliação **falhar fechada** (erro, nunca allow silencioso), então cubra os exemplos com um teste.
+
+Regex é best-effort: concatenação dinâmica e stored procedures escapam. Trate-o como defense-in-depth e auditoria — a fronteira dura deve estar no próprio serviço (ex.: um role read-only). Veja os providers `snow` e `az` em `examples/providers/` para políticas completas.
+
 ## Posicione flags depois da ação
 
 Jasper avalia prefixos desde o primeiro item. Prefira:

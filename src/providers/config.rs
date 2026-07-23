@@ -70,18 +70,27 @@ impl TargetConfig {
 
 impl TargetingConfig {
     pub fn rejects_argument(&self, argument: &str) -> bool {
-        self.mode
-            .locked_options()
-            .iter()
-            .copied()
-            .chain(self.locked_options.iter().map(String::as_str))
-            .any(|option| {
-                argument == option
-                    || argument
-                        .strip_prefix(option)
-                        .is_some_and(|rest| rest.starts_with('='))
-            })
+        argument_is_locked(
+            argument,
+            self.mode
+                .locked_options()
+                .iter()
+                .copied()
+                .chain(self.locked_options.iter().map(String::as_str)),
+        )
     }
+}
+
+/// True when `argument` matches one of `options`, either bare (`--profile`) or in
+/// the `--profile=value` form. Shared by target locked-options and policy
+/// forbidden-args so both reject an argument in any argv position identically.
+fn argument_is_locked<'a>(argument: &str, options: impl IntoIterator<Item = &'a str>) -> bool {
+    options.into_iter().any(|option| {
+        argument == option
+            || argument
+                .strip_prefix(option)
+                .is_some_and(|rest| rest.starts_with('='))
+    })
 }
 
 impl TargetMode {
@@ -132,6 +141,13 @@ pub struct PolicyConfig {
     pub minimum_accept_tokens: usize,
     #[serde(default)]
     pub grant_rule: GrantRule,
+    /// Arguments rejected in any argv position, independent of the rules. Closes
+    /// channels the policy cannot inspect (e.g. `snow --filename`, `-i`).
+    #[serde(default)]
+    pub forbidden_args: Vec<String>,
+    /// Argv normalization applied to policy evaluation only.
+    #[serde(default)]
+    pub ignore_args: IgnoreArgs,
 }
 
 impl Default for PolicyConfig {
@@ -139,12 +155,55 @@ impl Default for PolicyConfig {
         Self {
             minimum_accept_tokens: default_minimum_accept_tokens(),
             grant_rule: GrantRule::default(),
+            forbidden_args: Vec::new(),
+            ignore_args: IgnoreArgs::default(),
         }
+    }
+}
+
+impl PolicyConfig {
+    /// True when the argument is forbidden (any position, bare or `--flag=value`).
+    pub fn rejects(&self, argument: &str) -> bool {
+        argument_is_locked(argument, self.forbidden_args.iter().map(String::as_str))
     }
 }
 
 fn default_minimum_accept_tokens() -> usize {
     1
+}
+
+/// Removes noise from the argv before policy evaluation — never from the executed
+/// command — so formatting flags or a fixed command prefix cannot trip a rule.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct IgnoreArgs {
+    /// Number of leading tokens to drop (e.g. a fixed subcommand).
+    #[serde(default)]
+    pub leading: usize,
+    /// Named flags to drop. A bare flag also drops the value token that follows
+    /// it; the `--flag=value` form drops just the single token.
+    #[serde(default)]
+    pub flags: Vec<String>,
+}
+
+impl IgnoreArgs {
+    pub fn normalize(&self, args: &[String]) -> Vec<String> {
+        let mut result = Vec::with_capacity(args.len());
+        let mut iter = args.iter().skip(self.leading);
+        while let Some(arg) = iter.next() {
+            if self.flags.iter().any(|flag| arg == flag) {
+                iter.next(); // drop the value that follows a bare flag
+                continue;
+            }
+            if self.flags.iter().any(|flag| {
+                arg.strip_prefix(flag.as_str())
+                    .is_some_and(|rest| rest.starts_with('='))
+            }) {
+                continue; // `--flag=value` is a single token
+            }
+            result.push(arg.clone());
+        }
+        result
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -321,5 +380,39 @@ mod tests {
             assert!(targeting.rejects_argument(argument), "{argument}");
         }
         assert!(!targeting.rejects_argument("--output=json"));
+    }
+
+    fn s(values: &[&str]) -> Vec<String> {
+        values.iter().map(|v| (*v).into()).collect()
+    }
+
+    #[test]
+    fn forbidden_args_reject_in_any_position_and_form() {
+        let policy = PolicyConfig {
+            forbidden_args: s(&["-f", "--filename", "-i", "--stdin"]),
+            ..PolicyConfig::default()
+        };
+        assert!(policy.rejects("-f"));
+        assert!(policy.rejects("--filename"));
+        assert!(policy.rejects("--filename=x.sql"));
+        assert!(!policy.rejects("--format"));
+    }
+
+    #[test]
+    fn ignore_args_drops_leading_and_named_flags() {
+        let ignore = IgnoreArgs {
+            leading: 1,
+            flags: s(&["--format", "-o"]),
+        };
+        // "sql" (leading) dropped; "--format json" (bare + value) dropped;
+        // "-o=table" (=form) dropped; the query survives.
+        let args = s(&["sql", "-q", "select 1", "--format", "json", "-o=table"]);
+        assert_eq!(ignore.normalize(&args), s(&["-q", "select 1"]));
+    }
+
+    #[test]
+    fn ignore_args_default_is_identity() {
+        let args = s(&["sql", "-q", "select 1"]);
+        assert_eq!(IgnoreArgs::default().normalize(&args), args);
     }
 }

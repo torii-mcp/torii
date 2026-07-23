@@ -35,6 +35,8 @@ pub enum Error {
     ProviderNotFound(String),
     #[error("rules file not found at {0}")]
     RulesNotFound(PathBuf),
+    #[error("invalid rule {rule:?}: {reason}")]
+    InvalidRule { rule: String, reason: String },
     #[error("invalid env file {path}: {reason}")]
     EnvParse { path: PathBuf, reason: String },
     #[error("failed to launch {program:?}: {source}")]

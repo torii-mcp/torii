@@ -1,0 +1,21 @@
+version: "1"
+name: az
+tool: az
+description: Executa a Azure CLI através do Torii, herdando a sessão do az login.
+command: az
+args_prefix: []
+
+policy:
+  # Comandos da Azure CLI têm a forma "grupo verbo" (ex.: vm list); dois tokens
+  # é o piso para um accept não ficar amplo demais. Grupos com subcomandos
+  # sensíveis (storage account, keyvault) exigem regras ainda mais específicas.
+  minimum_accept_tokens: 2
+
+auth:
+  # A Azure CLI guarda os tokens do az login em ~/.azure; o Torii apenas herda
+  # essa sessão, sem gerenciar credenciais próprias.
+  strategy: inherited
+  cache_ttl_seconds: 300
+
+environment:
+  file: .env

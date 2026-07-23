@@ -159,7 +159,28 @@ impl Invoker {
         audit::log(&self.paths, &scope.audit_scope, "invoke", &audit_rule, "");
 
         let policy = rules::load(&scope.rules)?;
-        for invalid in policy.invalid_accepts(provider.config.policy.minimum_accept_tokens) {
+
+        // Forbidden arguments close channels the policy cannot inspect (a query
+        // supplied via file or stdin). Rejected in any position, before any rule
+        // is evaluated, and never executed.
+        if let Some(argument) = args.iter().find(|arg| provider.config.policy.rejects(arg)) {
+            let decision = PolicyDecision {
+                result: DecisionResult::Deny,
+                source: "forbidden-arg".into(),
+                rule: Some(argument.clone()),
+            };
+            audit::log(
+                &self.paths,
+                &scope.audit_scope,
+                "denied-forbidden-arg",
+                argument,
+                "",
+            );
+            return Ok(invocation_result(&provider, &scope, decision, None));
+        }
+
+        let min_tokens = provider.config.policy.minimum_accept_tokens;
+        for invalid in policy.invalid_accepts(min_tokens) {
             audit::log(
                 &self.paths,
                 &scope.audit_scope,
@@ -169,7 +190,24 @@ impl Invoker {
             );
         }
 
-        let evaluation = policy.evaluate(args, provider.config.policy.minimum_accept_tokens);
+        // Normalize argv for evaluation only — the executed command still uses the
+        // original args. Compile up front so a malformed regex fails closed
+        // (an error, never a silent allow).
+        let normalized = provider.config.policy.ignore_args.normalize(args);
+        let compiled = match policy.compile() {
+            Ok(compiled) => compiled,
+            Err(error) => {
+                audit::log(
+                    &self.paths,
+                    &scope.audit_scope,
+                    "invalid-rule",
+                    &error.to_string(),
+                    "",
+                );
+                return Err(error);
+            }
+        };
+        let evaluation = compiled.evaluate(&normalized, min_tokens);
         if let Evaluation::DeniedExplicit { rule } = &evaluation {
             let decision = PolicyDecision {
                 result: DecisionResult::Deny,
