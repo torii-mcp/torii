@@ -113,6 +113,32 @@ policy:
 
 `minimum_accept_tokens` vale somente para `accept` em `rules.yaml`. O escopo de um grant temporário é escolhido pelo operador na janela de autorização como invocação exata ou prefixo de tokens; não é derivado automaticamente pelo provider. Em providers target-aware, `targets/<name>/rules.yaml` substitui o `rules.yaml` compartilhado quando existe. Um grant só é consultado depois de o alias possuir lease válido; ele não ativa target algum.
 
+### `forbidden_args`
+
+```yaml
+policy:
+  forbidden_args:
+    - "-f"
+    - "--filename"
+    - "-i"
+    - "--stdin"
+```
+
+Argumentos negados em **qualquer posição** do argv, antes de qualquer regra ser avaliada. Servem para fechar canais que a política não consegue inspecionar — uma query lida de arquivo ou de stdin em vez de vir no próprio argv. Uma chamada com um argumento proibido é negada com fonte `forbidden-arg` e nunca executada. O casamento aceita a forma nua (`--filename`) e a forma `--filename=valor`.
+
+### `ignore_args`
+
+```yaml
+policy:
+  ignore_args:
+    leading: 0
+    flags:
+      - "--format"
+      - "-o"
+```
+
+Normalização do argv aplicada **somente à avaliação da política** — nunca ao comando executado. Remove ruído que poderia acionar uma regra por engano: `leading` descarta N tokens iniciais (ex.: um subcomando fixo) e `flags` descarta flags de formatação. Uma flag nua também descarta o token de valor seguinte (`--format json`); a forma `--format=json` descarta só o token único. Se um regex compilar de forma inválida, a avaliação falha fechada (erro, nunca allow silencioso).
+
 Pacotes antigos podem conter `policy.grant_rule`. O campo é aceito apenas por compatibilidade e não influencia grants novos.
 
 ## Autenticação `environment`

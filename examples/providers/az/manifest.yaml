@@ -1,0 +1,12 @@
+version: "1"
+name: az
+package_version: "0.1.0"
+description: Azure CLI herdando a sessão do az login, com setup de leitura curado.
+provider: provider.yaml
+rules: rules.yaml
+environment: env.example
+setups:
+  - name: readonly
+    kind: readonly
+    description: Descoberta e leitura de recursos, sem escrita nem emissão de credenciais.
+    rules: setups/readonly/rules.yaml

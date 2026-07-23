@@ -1,0 +1,33 @@
+version: "1"
+name: snow
+tool: snow
+description: Executa a Snowflake CLI (snow) via Torii, inspecionando a query SQL.
+command: snow
+args_prefix: []
+
+policy:
+  minimum_accept_tokens: 1
+  # Canais em que a query entra sem o Torii inspecionar (arquivo/stdin). Negados
+  # em qualquer posição — sem isso, as regras de conteúdo viram decoração.
+  forbidden_args:
+    - "-f"
+    - "--filename"
+    - "-i"
+    - "--stdin"
+  # Flags de formatação são removidas apenas da avaliação (não da execução), para
+  # um valor de --format não acionar um match por engano.
+  ignore_args:
+    leading: 0
+    flags:
+      - "--format"
+      - "-o"
+      - "--output"
+      - "-x"
+
+auth:
+  # A connection default vem de ~/.snowflake/config.toml; o Torii herda a sessão.
+  strategy: inherited
+  cache_ttl_seconds: 300
+
+environment:
+  file: .env
