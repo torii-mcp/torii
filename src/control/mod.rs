@@ -19,7 +19,9 @@ pub enum AccessChoice {
     Deny,
     AllowOnce,
     AllowFor {
-        minutes: u32,
+        /// Seconds, not minutes: aligning with an older lease lands on a
+        /// sub-minute duration (4 min 30 s of an expiring five-minute grant).
+        seconds: u32,
         selection: GrantSelection,
     },
 }
@@ -57,11 +59,12 @@ pub async fn ask_access(
     provider: &str,
     args: &[String],
     default_minutes: u32,
+    align_seconds: Option<u32>,
 ) -> Result<AccessChoice> {
     if gui_disabled() {
         return Ok(AccessChoice::Deny);
     }
-    gui::ask_access(provider, args, default_minutes).await
+    gui::ask_access(provider, args, default_minutes, align_seconds).await
 }
 
 pub async fn ask_target_access(

@@ -8,6 +8,10 @@ O registry não encontrou `provider.yaml` sob `providers/`. Execute `torii provi
 
 O provider existe, mas não possui `rules.yaml`. Crie uma política explícita; não há fallback permissivo.
 
+## `could not find the executable ... in PATH`
+
+O CLI do provider não está no `PATH` do processo que iniciou o Torii. Confirme com `where <cli>` no mesmo terminal e reinicie o cliente MCP depois de alterar o `PATH`, pois o servidor herda o ambiente de quem o lançou. No Windows não é preciso indicar extensão em `command`: o nome nu é procurado com as extensões do `PATHEXT`, então `command: az` encontra `az.cmd`. A busca ignora o diretório atual por segurança; um CLI que só exista ali não é executado.
+
 ## Chamada não resolvida é negada sem janela
 
 Verifique `TORII_NO_GUI`. Qualquer valor não vazio diferente de `0` desabilita GUI. Em headless, default deny é o comportamento esperado. Variáveis do AWS Gate não alteram o Torii.

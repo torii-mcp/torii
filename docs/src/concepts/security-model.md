@@ -7,7 +7,7 @@ O Torii reduz a superfície de execução disponível ao agente. Ele não transf
 1. **Default deny.** Ausência de regra ou grant não significa permissão.
 2. **Deny prioritário.** Um deny compatível encerra a avaliação antes de qualquer aprovação.
 3. **Autorização antes de autenticação.** `.env`, credenciais e cache não são lidos no caminho negado.
-4. **Sem shell.** O programa recebe argumentos via `Command::args`.
+4. **Sem shell.** O Torii nunca monta uma linha de comando; o programa recebe argumentos via `Command::args`.
 5. **Credencial por processo.** Material coletado pelo Torii é sobreposto somente nos filhos de validação e execução.
 6. **Substituição após validação.** Reauth falho preserva a sessão anterior.
 7. **Concorrência serializada por escopo de autenticação.** Chamadas que herdam o mesmo provider compartilham seu lock; cada alias `aws_profile` possui um lock próprio.
@@ -60,9 +60,17 @@ Criar um alias não o ativa. O lease autoriza temporariamente o uso daquele bind
 
 Todos os aliases configurados continuam visíveis no schema MCP, inclusive inativos. Isso permite que uma chamada a um alias conhecido peça decisão humana; esconder aliases inativos no schema impediria essa fronteira. O estado fica por provider, contém expiração e um digest do binding. Alterar, remover ou recriar o binding invalida o lease anterior.
 
-A interface humana mostra o binding solicitado e os aliases ativos. **Substituir** desativa todos os demais e ativa o solicitado. **Adicionar** preserva os ativos. Quando isso resultar em mais de um, um alerta em largura completa fica imediatamente acima das ações, avisa que o agente poderá escolher qualquer alias ativo em operações permitidas e exige manter **Adicionar** pressionado por 2 segundos; soltar antes interrompe a confirmação. **Negar** não altera o estado. A duração vai de 1 a 1.440 minutos; o padrão é `default_target_minutes`, inicialmente 15.
+A interface humana mostra o binding solicitado e os aliases ativos. **Substituir** desativa todos os demais e ativa o solicitado. **Adicionar** preserva os ativos. Quando isso resultar em mais de um, um alerta em largura completa fica imediatamente acima das ações, avisa que o agente poderá escolher qualquer alias ativo em operações permitidas e exige manter **Adicionar** pressionado por 1 segundo; soltar antes interrompe a confirmação. **Negar** não altera o estado. A duração vai de 1 a 1.440 minutos; o padrão é `default_target_minutes`, inicialmente 15.
 
 O estado possui revisão, CAS (comparação-e-troca) antes da escrita, um arquivo de lock exclusivo do sistema operacional entre processos e persistência atômica. O handle do lock é liberado automaticamente ao término ou falha do processo; não há TTL ou limpeza por timeout de um lock considerado stale. Assim, uma escolha feita numa janela antiga não restaura um lease depois de `target clear` ou outra alteração. O lease é conferido novamente antes de ambiente/autenticação e imediatamente antes do launch; uma revogação ou expiração bloqueia uma chamada ainda pendente, mas não encerra um processo já iniciado.
+
+## Resolução do executável
+
+`command` nomeia o CLI sem caminho e sem extensão. No Unix o nome vai para `execvp`, que já percorre o `PATH`. No Windows o `CreateProcess` só acrescenta `.exe`, o que tornaria invisível qualquer CLI distribuído como wrapper batch — a Azure CLI instala `az.cmd` e nunca um `az.exe`. O Torii então percorre o `PATH` diretório por diretório, tentando as extensões do `PATHEXT` em ordem, e entrega ao launcher um caminho absoluto.
+
+A busca cobre somente o `PATH`. O diretório atual e o diretório do próprio binário do Torii ficam de fora de propósito: o `CreateProcess` os consultaria, e um agente capaz de gravar um arquivo em qualquer um deles poderia sombrear o CLI do provider. Um caminho absoluto também impede que o filho repita a busca sob outro `PATH`.
+
+Quando o nome resolve para um wrapper `.bat` ou `.cmd`, o Windows não tem como carregá-lo sem `cmd.exe`. O Torii continua não montando linha de comando: os argumentos seguem como vetor até `Command::args`, e a biblioteca padrão os cita para o `cmd.exe`. O que precisa valer é que o vetor chegue como dado — `&`, `|`, `^`, `>`, `%VAR%` e `!VAR!` atravessam o wrapper sem virar comando — e que um argumento que a citação não consiga expressar, como um que contenha quebra de linha, falhe o launch em vez de chegar ambíguo. Ambos estão cobertos por teste.
 
 ## Ambiente herdado
 

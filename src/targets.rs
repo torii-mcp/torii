@@ -435,7 +435,8 @@ async fn validate_context(provider: &Provider, context: &str) -> Result<()> {
             .base()
             .join(&provider.config.environment.file),
     )?;
-    let mut command = tokio::process::Command::new(&provider.config.command);
+    let program = crate::runtime::program::resolve(&provider.config.command)?;
+    let mut command = tokio::process::Command::new(program);
     command
         .args(&provider.config.args_prefix)
         .args(&args)

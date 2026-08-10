@@ -182,6 +182,13 @@ pub fn load_active(path: &Path, now: u64) -> GrantLoad {
     }
 }
 
+/// When the oldest grant still standing expires. The interface offers that
+/// remaining time so a new grant can end with the access that opened the
+/// window instead of outliving it. File order is grant order.
+pub fn oldest_active_expiry(entries: &[ActiveGrant]) -> Option<u64> {
+    entries.first().map(|entry| entry.expires_at)
+}
+
 pub fn matching_grant(entries: &[ActiveGrant], args: &[String], now: u64) -> Option<GrantEvidence> {
     entries
         .iter()
@@ -313,6 +320,30 @@ mod tests {
         let contents = std::fs::read_to_string(path).unwrap();
         assert!(contents.contains("version: '2'"));
         assert!(!contents.contains("\tget pods"));
+    }
+
+    /// The interface offers the oldest grant still standing, in grant order —
+    /// not whichever entry happens to expire first.
+    #[test]
+    fn the_oldest_active_grant_is_the_one_offered_for_alignment() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let path = temp.path().join("grants");
+        add(&path, &GrantMatcher::Exact(args(&["s3", "ls"])), 400, 100).unwrap();
+        add(
+            &path,
+            &GrantMatcher::Exact(args(&["logs", "tail"])),
+            900,
+            100,
+        )
+        .unwrap();
+
+        let load = load_active(&path, 130);
+        assert_eq!(oldest_active_expiry(&load.active), Some(400));
+
+        // Once it expires, the next still-valid grant takes its place.
+        let load = load_active(&path, 500);
+        assert_eq!(oldest_active_expiry(&load.active), Some(900));
+        assert_eq!(oldest_active_expiry(&[]), None);
     }
 
     #[test]

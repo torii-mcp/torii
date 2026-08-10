@@ -74,6 +74,8 @@ No catálogo oficial, `source` aponta para um asset ZIP de uma GitHub Release do
 
 O pacote é independente de Windows ou Linux porque contém apenas arquivos declarativos. O executável indicado por `provider.yaml`, como `aws` ou `kubectl`, continua sendo uma dependência externa instalada pelo usuário na plataforma.
 
+`command` recebe o nome nu do CLI, sem extensão e sem caminho. No Windows, o Torii procura esse nome no `PATH` combinando cada diretório com as extensões do `PATHEXT`, então um CLI distribuído como wrapper batch é encontrado sem variante por sistema: `command: az` resolve para `az.cmd`, que é o único executável que a Azure CLI instala. Ver "Resolução do executável" no [modelo de segurança](../concepts/security-model.md).
+
 ## Estado instalado
 
 ```text

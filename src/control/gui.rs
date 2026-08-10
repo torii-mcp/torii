@@ -23,6 +23,8 @@ enum PromptRequest {
         provider: String,
         args: Vec<String>,
         default_minutes: u32,
+        /// Time left on the oldest grant still valid, offered as the first preset.
+        align_seconds: Option<u32>,
     },
     TargetAccess {
         provider: String,
@@ -52,11 +54,13 @@ pub async fn ask_access(
     provider: &str,
     args: &[String],
     default_minutes: u32,
+    align_seconds: Option<u32>,
 ) -> Result<AccessChoice> {
     let request = PromptRequest::Access {
         provider: provider.into(),
         args: args.to_vec(),
         default_minutes,
+        align_seconds,
     };
     match invoke_child(request).await? {
         PromptResponse::Access(choice) => Ok(choice),
@@ -154,9 +158,11 @@ pub fn run_child() -> i32 {
             provider,
             args,
             default_minutes,
+            align_seconds,
         }) => {
             let response = PromptResponse::Access(
-                access_window(provider, args, default_minutes).unwrap_or(AccessChoice::Deny),
+                access_window(provider, args, default_minutes, align_seconds)
+                    .unwrap_or(AccessChoice::Deny),
             );
             if serde_json::to_writer(std::io::stdout(), &response).is_ok() {
                 0
@@ -253,6 +259,11 @@ const ACCESS_TIMED_EXACT_HEIGHT: f32 = 470.0;
 const ACCESS_TIMED_PREFIX_HEIGHT: f32 = 620.0;
 const ACCESS_DETAILS_EXTRA_HEIGHT: f32 = 90.0;
 const ACCESS_MAX_HEIGHT: f32 = 700.0;
+/// Subpixel differences must not make the window chase its own measurement.
+const ACCESS_HEIGHT_TOLERANCE: f32 = 1.0;
+/// Standard durations offered beside the duration field, in minutes.
+const DURATION_PRESET_MINUTES: [u32; 5] = [5, 10, 15, 20, 30];
+const DURATION_PRESET_WIDTH: f32 = 46.0;
 const TOKEN_COMPACT_CHARS: usize = 48;
 const TOKEN_TOOLTIP_CHARS: usize = 512;
 const TOKEN_DETAIL_PAGE_CHARS: usize = 4096;
@@ -268,6 +279,23 @@ const FREE_TEXT: egui::Color32 = egui::Color32::from_rgb(198, 203, 211);
 const BOUNDARY_ACCENT: egui::Color32 = egui::Color32::from_rgb(229, 192, 123);
 const SCOPE_SUMMARY_BG: egui::Color32 = egui::Color32::from_rgb(45, 40, 28);
 
+/// `5 min`, `4 min 30 s` — for sentences.
+fn spelled_duration(seconds: u32) -> String {
+    match (seconds / 60, seconds % 60) {
+        (0, rest) => format!("{rest} s"),
+        (minutes, 0) => format!("{minutes} min"),
+        (minutes, rest) => format!("{minutes} min {rest} s"),
+    }
+}
+
+/// `5`, `4:30` — for the preset buttons.
+fn compact_duration(seconds: u32) -> String {
+    match (seconds / 60, seconds % 60) {
+        (minutes, 0) => minutes.to_string(),
+        (minutes, rest) => format!("{minutes}:{rest:02}"),
+    }
+}
+
 fn access_height(timed: bool, prefix: bool, details_open: bool) -> f32 {
     let base = match (timed, prefix) {
         (false, _) => ACCESS_ONCE_HEIGHT,
@@ -279,6 +307,15 @@ fn access_height(timed: bool, prefix: bool, details_open: bool) -> f32 {
     } else {
         base
     }
+}
+
+/// Height of the authorization window: the selected flow sets a floor, the body
+/// measured on the last frame may raise it, and the cap keeps the window usable
+/// on a small screen. Beyond the cap the body scrolls instead of being cut off.
+fn access_window_height(flow: f32, measured: Option<f32>) -> f32 {
+    measured
+        .map_or(flow, |measured| measured.max(flow))
+        .min(ACCESS_MAX_HEIGHT)
 }
 
 fn suggested_prefix_len(args: &[String]) -> Option<usize> {
@@ -381,13 +418,19 @@ struct AccessApp {
     prefix: bool,
     prefix_len: usize,
     suggested_prefix_len: Option<usize>,
-    minutes: u32,
+    /// The chosen duration in seconds: the alignment preset is rarely a whole
+    /// number of minutes.
+    seconds: u32,
+    /// Time left on the oldest grant still valid, when there is one.
+    align_seconds: Option<u32>,
     arg_char_counts: Vec<usize>,
     long_args: Vec<usize>,
     details_arg: Option<usize>,
     details_page: usize,
     requested_height: f32,
     pending_height: Option<f32>,
+    /// Total height the body asked for on the last frame, chrome included.
+    measured_height: Option<f32>,
     decision_since: Option<Instant>,
     outcome: Rc<RefCell<Option<AccessChoice>>>,
 }
@@ -430,18 +473,19 @@ impl eframe::App for AccessApp {
                                     .color(PROMPT_SUCCESS_COLOR),
                             );
                         }
-                        Some(AccessChoice::AllowFor { minutes, .. }) => {
+                        Some(AccessChoice::AllowFor { seconds, .. }) => {
                             ui.label(
                                 egui::RichText::new(format!(
-                                    "👍 Acesso autorizado por {minutes} min."
+                                    "👍 Acesso autorizado por {}.",
+                                    spelled_duration(seconds)
                                 ))
                                 .color(PROMPT_SUCCESS_COLOR),
                             );
                         }
                         None if self.timed => {
                             ui.label(format!(
-                                "Segure o botão para permitir por {} min.",
-                                self.minutes
+                                "Segure o botão para permitir por {}.",
+                                spelled_duration(self.seconds)
                             ));
                         }
                         None => {
@@ -462,10 +506,10 @@ impl eframe::App for AccessApp {
                             self.finish_decision(ctx, AccessChoice::Deny);
                         }
                     });
-                    // Press-and-hold to confirm: the deliberate 2s gesture replaces
+                    // Press-and-hold to confirm: the deliberate gesture replaces
                     // the old "I reviewed this" checkbox as the confirmation gate.
                     let label = if self.timed {
-                        format!("Segure para permitir por {} min", self.minutes)
+                        format!("Segure para permitir por {}", spelled_duration(self.seconds))
                     } else {
                         "Segure para permitir uma vez".to_string()
                     };
@@ -480,7 +524,7 @@ impl eframe::App for AccessApp {
                                 .sense(egui::Sense::click_and_drag()),
                         )
                         .on_hover_text(
-                            "Mantenha pressionado por 2 segundos para revisar e confirmar a permissão.",
+                            "Mantenha pressionado por 1 segundo para revisar e confirmar a permissão.",
                         );
                     let (pointer_down, focused) =
                         ctx.input(|input| (input.pointer.primary_down(), input.focused));
@@ -503,7 +547,7 @@ impl eframe::App for AccessApp {
                             ctx,
                             if self.timed {
                                 AccessChoice::AllowFor {
-                                    minutes: self.minutes,
+                                    seconds: self.seconds,
                                     selection: if self.prefix {
                                         GrantSelection::Prefix {
                                             token_count: self.prefix_len,
@@ -540,204 +584,261 @@ impl eframe::App for AccessApp {
             });
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
-            ui.heading(format!("Torii — autorização ({})", self.provider));
-            ui.label("A ação não está resolvida pela política.");
-            ui.add_space(2.0);
-            ui.separator();
-            ui.horizontal(|ui| {
-                ui.label(egui::RichText::new(format!(
-                    "Invocação solicitada · {} argumentos",
-                    self.args.len()
-                )));
-                if !self.long_args.is_empty() {
-                    const DETAILS_BUTTON_WIDTH: f32 = 210.0;
-                    ui.add_space((ui.available_width() - DETAILS_BUTTON_WIDTH).max(0.0));
-                    let label = if self.details_arg.is_some() {
-                        "Ocultar detalhes".into()
-                    } else if self.long_args.len() == 1 {
-                        "Revisar 1 argumento longo".into()
-                    } else {
-                        format!("Revisar {} argumentos longos", self.long_args.len())
-                    };
-                    if ui.button(label).clicked() {
-                        if self.details_arg.is_some() {
-                            self.details_arg = None;
-                        } else {
-                            self.details_arg = self.long_args.first().copied();
-                            self.details_page = 0;
-                        }
-                    }
-                }
-            });
-            let editing_prefix = self.timed && self.prefix && !decided;
-            if editing_prefix {
-                ui.small("Os argumentos estão no editor de escopo temporário abaixo.");
-            } else {
-                egui::ScrollArea::vertical()
-                    .id_salt("access_arguments")
-                    .max_height(105.0)
-                    .min_scrolled_height(36.0)
-                    .auto_shrink([false, true])
-                    .scroll_bar_visibility(
-                        egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded,
-                    )
-                    .show(ui, |ui| {
-                        self.render_argument_strip(ui);
-                    });
-            }
-            if self.details_arg.is_some() {
-                self.render_argument_details(ui);
-            }
-            ui.add_space(2.0);
-            ui.separator();
-            ui.label(egui::RichText::new("Como autorizar?").strong());
-            let once_changed = ui.radio_value(&mut self.timed, false, "Uma vez").changed();
-            let temporary_changed = ui
-                .radio_value(&mut self.timed, true, "Temporariamente")
-                .changed();
-            if once_changed || temporary_changed {
-                self.hold = HoldState::default();
-            }
-            if temporary_changed {
-                if let Some(suggested) = self.suggested_prefix_len {
-                    self.prefix = true;
-                    self.prefix_len = suggested;
-                } else {
-                    self.prefix = false;
-                    self.prefix_len = self.args.len();
-                }
-            }
-            if self.timed {
-                ui.group(|ui| {
-                    ui.set_min_width(ui.available_width());
-                    ui.label(egui::RichText::new("Escopo temporário").strong());
-                    let prefix_label = match self.suggested_prefix_len {
-                        Some(suggested) if self.prefix_len == suggested => {
-                            format!("Prefixo sugerido · {suggested} argumentos")
-                        }
-                        Some(_) => format!(
-                            "Prefixo personalizado · {} argumentos",
-                            self.prefix_len
-                        ),
-                        None => "Prefixo personalizado".into(),
-                    };
-                    let mut prefix_changed = false;
-                    if self.suggested_prefix_len.is_some() {
-                        prefix_changed = ui
-                            .radio_value(&mut self.prefix, true, &prefix_label)
-                            .changed();
-                    }
-                    let exact_changed = ui
-                        .radio_value(
-                            &mut self.prefix,
-                            false,
-                            "Somente esta invocação exata",
-                        )
-                        .changed();
-                    if self.suggested_prefix_len.is_none() {
-                        prefix_changed = ui
-                            .radio_value(&mut self.prefix, true, &prefix_label)
-                            .changed();
-                    }
-                    if prefix_changed {
-                        if let Some(suggested) = self.suggested_prefix_len {
-                            self.prefix_len = suggested;
-                        }
-                    }
-                    if exact_changed || prefix_changed {
-                        self.hold = HoldState::default();
-                    }
-                    if self.prefix {
-                        if let Some(suggested) = self.suggested_prefix_len {
-                            if self.prefix_len == suggested {
-                                ui.small(format!(
-                                    "Sugestão pelo formato: fronteira antes de {}.",
-                                    bounded_token_preview(&self.args[suggested], 36)
-                                ));
-                            } else {
-                                ui.horizontal(|ui| {
-                                    ui.small(format!(
-                                        "Fronteira ajustada por você; a sugestão original era {suggested}."
-                                    ));
-                                    if ui.button("Restaurar sugestão").clicked() {
-                                        self.prefix_len = suggested;
-                                        self.hold = HoldState::default();
-                                    }
-                                });
-                            }
-                        } else {
-                            ui.small(
-                                "Nenhuma fronteira estrutural foi encontrada; escolha o prefixo manualmente.",
-                            );
-                        }
-                        ui.label("Clique nas pílulas ou use os controles para mover a fronteira.");
-                        egui::ScrollArea::vertical()
-                            .id_salt("access_prefix_editor")
-                            .max_height(190.0)
-                            .min_scrolled_height(80.0)
-                            .auto_shrink([false, true])
-                            .scroll_bar_visibility(
-                                egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded,
-                            )
-                            .show(ui, |ui| self.render_prefix_editor(ui));
-                        ui.horizontal(|ui| {
-                            if ui
-                                .add_enabled(
-                                    self.prefix_len > 1,
-                                    egui::Button::new("◀").small(),
-                                )
-                                .clicked()
-                            {
-                                self.prefix_len -= 1;
-                                self.hold = HoldState::default();
-                            }
-                            ui.label(format!(
-                                "{} de {} argumentos fixos",
-                                self.prefix_len,
-                                self.args.len()
-                            ));
-                            if ui
-                                .add_enabled(
-                                    self.prefix_len < self.args.len(),
-                                    egui::Button::new("▶").small(),
-                                )
-                                .clicked()
-                            {
-                                self.prefix_len += 1;
-                                self.hold = HoldState::default();
-                            }
-                        });
-                        let fixed_long = self
-                            .long_args
-                            .iter()
-                            .filter(|index| **index < self.prefix_len)
-                            .count();
-                        let free_long = self.long_args.len().saturating_sub(fixed_long);
-                        if fixed_long > 0 || free_long > 0 {
-                            ui.small(format!(
-                                "Argumentos longos: {fixed_long} dentro do prefixo e {free_long} fora dele."
-                            ));
-                        }
-                    }
-                    ui.small("Denies explícitos continuam prevalecendo.");
-                });
-                ui.horizontal(|ui| {
-                    ui.label("Duração:");
-                    if ui
-                        .add(egui::DragValue::new(&mut self.minutes).range(1..=1440))
-                        .changed()
-                    {
-                        self.hold = HoldState::default();
-                    }
-                    ui.label("minutos");
-                });
-            }
+            // How tall the body really is only becomes known after layout: the
+            // argument pills wrap into as many lines as the longest invocation
+            // needs. Measure the body and let the window follow it, and keep the
+            // body scrollable so nothing — the duration control above all — can
+            // end up parked under the bottom panels.
+            let chrome = (ctx.screen_rect().height() - ui.available_height()).max(0.0);
+            let body = egui::ScrollArea::vertical()
+                .id_salt("access_body")
+                .auto_shrink([false, false])
+                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded)
+                .show(ui, |ui| self.render_body(ui, decided));
+            self.measured_height = Some(chrome + body.content_size.y);
         });
     }
 }
 
 impl AccessApp {
+    /// What the call is, how it may be authorized, and for how long.
+    fn render_body(&mut self, ui: &mut egui::Ui, decided: bool) {
+        ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
+        ui.heading(format!("Torii — autorização ({})", self.provider));
+        ui.label("A ação não está resolvida pela política.");
+        ui.add_space(2.0);
+        ui.separator();
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new(format!(
+                "Invocação solicitada · {} argumentos",
+                self.args.len()
+            )));
+            if !self.long_args.is_empty() {
+                const DETAILS_BUTTON_WIDTH: f32 = 210.0;
+                ui.add_space((ui.available_width() - DETAILS_BUTTON_WIDTH).max(0.0));
+                let label = if self.details_arg.is_some() {
+                    "Ocultar detalhes".into()
+                } else if self.long_args.len() == 1 {
+                    "Revisar 1 argumento longo".into()
+                } else {
+                    format!("Revisar {} argumentos longos", self.long_args.len())
+                };
+                if ui.button(label).clicked() {
+                    if self.details_arg.is_some() {
+                        self.details_arg = None;
+                    } else {
+                        self.details_arg = self.long_args.first().copied();
+                        self.details_page = 0;
+                    }
+                }
+            }
+        });
+        let editing_prefix = self.timed && self.prefix && !decided;
+        if editing_prefix {
+            ui.small("Os argumentos estão no editor de escopo temporário abaixo.");
+        } else {
+            egui::ScrollArea::vertical()
+                .id_salt("access_arguments")
+                .max_height(105.0)
+                .min_scrolled_height(36.0)
+                .auto_shrink([false, true])
+                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded)
+                .show(ui, |ui| {
+                    self.render_argument_strip(ui);
+                });
+        }
+        if self.details_arg.is_some() {
+            self.render_argument_details(ui);
+        }
+        ui.add_space(2.0);
+        ui.separator();
+        ui.label(egui::RichText::new("Como autorizar?").strong());
+        let once_changed = ui.radio_value(&mut self.timed, false, "Uma vez").changed();
+        let temporary_changed = ui
+            .radio_value(&mut self.timed, true, "Temporariamente")
+            .changed();
+        if once_changed || temporary_changed {
+            self.hold = HoldState::default();
+        }
+        if temporary_changed {
+            // The prefix option is the initial one when there is a structural
+            // boundary to offer. Without one it would only widen the scope over
+            // the exact invocation, so the exact one stays selected.
+            if let Some(suggested) = self.suggested_prefix_len {
+                self.prefix = true;
+                self.prefix_len = suggested;
+            } else {
+                self.prefix = false;
+                self.prefix_len = self.args.len();
+            }
+        }
+        if self.timed {
+            ui.group(|ui| {
+                ui.set_min_width(ui.available_width());
+                ui.label(egui::RichText::new("Escopo temporário").strong());
+                let prefix_label = match self.suggested_prefix_len {
+                    Some(suggested) if self.prefix_len == suggested => {
+                        format!("Prefixo sugerido · {suggested} argumentos")
+                    }
+                    Some(_) => format!(
+                        "Prefixo personalizado · {} argumentos",
+                        self.prefix_len
+                    ),
+                    None => "Prefixo personalizado".into(),
+                };
+                let mut prefix_changed = false;
+                if self.suggested_prefix_len.is_some() {
+                    prefix_changed = ui
+                        .radio_value(&mut self.prefix, true, &prefix_label)
+                        .changed();
+                }
+                let exact_changed = ui
+                    .radio_value(
+                        &mut self.prefix,
+                        false,
+                        "Somente esta invocação exata",
+                    )
+                    .changed();
+                if self.suggested_prefix_len.is_none() {
+                    prefix_changed = ui
+                        .radio_value(&mut self.prefix, true, &prefix_label)
+                        .changed();
+                }
+                if prefix_changed {
+                    if let Some(suggested) = self.suggested_prefix_len {
+                        self.prefix_len = suggested;
+                    }
+                }
+                if exact_changed || prefix_changed {
+                    self.hold = HoldState::default();
+                }
+                if self.prefix {
+                    if let Some(suggested) = self.suggested_prefix_len {
+                        if self.prefix_len == suggested {
+                            ui.small(format!(
+                                "Sugestão pelo formato: fronteira antes de {}.",
+                                bounded_token_preview(&self.args[suggested], 36)
+                            ));
+                        } else {
+                            ui.horizontal(|ui| {
+                                ui.small(format!(
+                                    "Fronteira ajustada por você; a sugestão original era {suggested}."
+                                ));
+                                if ui.button("Restaurar sugestão").clicked() {
+                                    self.prefix_len = suggested;
+                                    self.hold = HoldState::default();
+                                }
+                            });
+                        }
+                    } else {
+                        ui.small(
+                            "Nenhuma fronteira estrutural foi encontrada; escolha o prefixo manualmente.",
+                        );
+                    }
+                    ui.label("Clique nas pílulas ou use os controles para mover a fronteira.");
+                    egui::ScrollArea::vertical()
+                        .id_salt("access_prefix_editor")
+                        .max_height(190.0)
+                        .min_scrolled_height(80.0)
+                        .auto_shrink([false, true])
+                        .scroll_bar_visibility(
+                            egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded,
+                        )
+                        .show(ui, |ui| self.render_prefix_editor(ui));
+                    ui.horizontal(|ui| {
+                        if ui
+                            .add_enabled(
+                                self.prefix_len > 1,
+                                egui::Button::new("◀").small(),
+                            )
+                            .clicked()
+                        {
+                            self.prefix_len -= 1;
+                            self.hold = HoldState::default();
+                        }
+                        ui.label(format!(
+                            "{} de {} argumentos fixos",
+                            self.prefix_len,
+                            self.args.len()
+                        ));
+                        if ui
+                            .add_enabled(
+                                self.prefix_len < self.args.len(),
+                                egui::Button::new("▶").small(),
+                            )
+                            .clicked()
+                        {
+                            self.prefix_len += 1;
+                            self.hold = HoldState::default();
+                        }
+                    });
+                    let fixed_long = self
+                        .long_args
+                        .iter()
+                        .filter(|index| **index < self.prefix_len)
+                        .count();
+                    let free_long = self.long_args.len().saturating_sub(fixed_long);
+                    if fixed_long > 0 || free_long > 0 {
+                        ui.small(format!(
+                            "Argumentos longos: {fixed_long} dentro do prefixo e {free_long} fora dele."
+                        ));
+                    }
+                }
+                ui.small("Denies explícitos continuam prevalecendo.");
+            });
+            ui.horizontal(|ui| {
+                ui.label("Duração:");
+                // The field stays in minutes: dragging is for a rough value, the
+                // presets on the right are for hitting an exact one.
+                let mut minutes = (self.seconds / 60).max(1);
+                if ui
+                    .add(egui::DragValue::new(&mut minutes).range(1..=1440))
+                    .changed()
+                {
+                    self.seconds = minutes * 60;
+                    self.hold = HoldState::default();
+                }
+                ui.label("minutos");
+                if let Some(align) = self.align_seconds {
+                    if self
+                        .duration_preset(ui, align, &compact_duration(align))
+                        .on_hover_text(
+                            "Termina junto com o acesso temporário mais antigo ainda válido.",
+                        )
+                        .clicked()
+                    {
+                        self.seconds = align;
+                        self.hold = HoldState::default();
+                    }
+                }
+                for preset in DURATION_PRESET_MINUTES {
+                    let seconds = preset * 60;
+                    if self
+                        .duration_preset(ui, seconds, &preset.to_string())
+                        .clicked()
+                    {
+                        self.seconds = seconds;
+                        self.hold = HoldState::default();
+                    }
+                }
+            });
+            if !self.seconds.is_multiple_of(60) {
+                ui.small(format!(
+                    "Duração alinhada: {}. O campo mostra apenas os minutos inteiros.",
+                    spelled_duration(self.seconds)
+                ));
+            }
+        }
+    }
+
+    /// One of the chunky duration buttons to the right of the field.
+    fn duration_preset(&self, ui: &mut egui::Ui, seconds: u32, label: &str) -> egui::Response {
+        ui.add_sized(
+            egui::vec2(DURATION_PRESET_WIDTH, ui.spacing().interact_size.y),
+            egui::SelectableLabel::new(self.seconds == seconds, label),
+        )
+    }
+
     fn scope_summary(&self) -> String {
         match (self.timed, self.prefix) {
             (false, _) => "Esta chamada será executada uma vez, sem salvar permissão temporária."
@@ -754,8 +855,11 @@ impl AccessApp {
     }
 
     fn sync_window_height(&mut self, ctx: &egui::Context) {
-        let desired = access_height(self.timed, self.prefix, self.details_arg.is_some());
-        if self.requested_height != desired {
+        let desired = access_window_height(
+            access_height(self.timed, self.prefix, self.details_arg.is_some()),
+            self.measured_height,
+        );
+        if (self.requested_height - desired).abs() > ACCESS_HEIGHT_TOLERANCE {
             self.requested_height = desired;
             self.pending_height = Some(desired);
         }
@@ -989,6 +1093,7 @@ fn access_window(
     provider: String,
     args: Vec<String>,
     default_minutes: u32,
+    align_seconds: Option<u32>,
 ) -> std::result::Result<AccessChoice, String> {
     let suggested_prefix_len = suggested_prefix_len(&args);
     let arg_char_counts = args
@@ -1014,13 +1119,15 @@ fn access_window(
                 timed: false,
                 prefix: false,
                 suggested_prefix_len,
-                minutes: default_minutes.max(1),
+                seconds: default_minutes.max(1) * 60,
+                align_seconds,
                 arg_char_counts,
                 long_args,
                 details_arg: None,
                 details_page: 0,
                 requested_height: ACCESS_ONCE_HEIGHT,
                 pending_height: None,
+                measured_height: None,
                 decision_since: None,
                 outcome: result,
             }))
@@ -1037,7 +1144,7 @@ const TARGET_ACCESS_MAX_HEIGHT: f32 = 620.0;
 const TARGET_ACCESS_ACTIVE_ROW_HEIGHT: f32 = 30.0;
 const TARGET_ACCESS_WARNING_HEIGHT: f32 = 82.0;
 const TARGET_ACCESS_ACTIONS_HEIGHT: f32 = 38.0;
-const HOLD_DURATION: Duration = Duration::from_secs(2);
+const HOLD_DURATION: Duration = Duration::from_secs(1);
 const TARGET_ADD_BUTTON_WIDTH: f32 = 214.0;
 const ALLOW_HOLD_BUTTON_WIDTH: f32 = 232.0;
 const TARGET_WARNING_BG: egui::Color32 = egui::Color32::from_rgb(63, 31, 31);
@@ -1149,7 +1256,7 @@ impl eframe::App for TargetAccessApp {
                                         .sense(egui::Sense::click_and_drag()),
                                 )
                                 .on_hover_text(
-                                    "Mantenha pressionado por 2 segundos para preservar os targets atuais e autorizar também o solicitado.",
+                                    "Mantenha pressionado por 1 segundo para preservar os targets atuais e autorizar também o solicitado.",
                                 );
                             let (pointer_down, focused) =
                                 ctx.input(|input| (input.pointer.primary_down(), input.focused));
@@ -1255,7 +1362,7 @@ impl eframe::App for TargetAccessApp {
                             );
                             ui.label(
                                 egui::RichText::new(
-                                    "Para manter os atuais, segure o botão Adicionar por 2 segundos.",
+                                    "Para manter os atuais, segure o botão Adicionar por 1 segundo.",
                                 )
                                 .strong(),
                             );
@@ -1792,6 +1899,68 @@ fn auth_window(
 mod tests {
     use super::*;
 
+    /// An authorization app in the flow where the bug bit: temporary access, so
+    /// the duration control sits at the bottom of the body.
+    fn access_app(args: Vec<String>) -> AccessApp {
+        let arg_char_counts = args
+            .iter()
+            .map(|argument| argument.chars().count())
+            .collect::<Vec<_>>();
+        let long_args = arg_char_counts
+            .iter()
+            .enumerate()
+            .filter_map(|(index, count)| (*count > TOKEN_COMPACT_CHARS).then_some(index))
+            .collect::<Vec<_>>();
+        AccessApp {
+            provider: "aws".into(),
+            prefix_len: args.len().max(1),
+            args,
+            hold: HoldState::default(),
+            timed: true,
+            prefix: false,
+            suggested_prefix_len: None,
+            seconds: 15 * 60,
+            align_seconds: Some(270),
+            arg_char_counts,
+            long_args,
+            details_arg: None,
+            details_page: 0,
+            requested_height: ACCESS_ONCE_HEIGHT,
+            pending_height: None,
+            measured_height: None,
+            decision_since: None,
+            outcome: Rc::new(RefCell::new(None)),
+        }
+    }
+
+    /// Lay the body out headless at the real window width and report what it
+    /// measured, the same number the window height follows.
+    fn measured_body_height(args: Vec<String>) -> f32 {
+        let ctx = egui::Context::default();
+        let mut app = access_app(args);
+        let mut measured = 0.0;
+        // The first frame loads fonts; the second one measures a settled layout.
+        for _ in 0..2 {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(ACCESS_WIDTH, ACCESS_ONCE_HEIGHT),
+                )),
+                ..Default::default()
+            };
+            let _ = ctx.run(input, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    let body = egui::ScrollArea::vertical()
+                        .id_salt("access_body")
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| app.render_body(ui, false));
+                    measured = body.content_size.y;
+                });
+            });
+        }
+        measured
+    }
+
     fn field(multiline: bool) -> AuthField {
         AuthField {
             name: "FIELD".into(),
@@ -1822,12 +1991,65 @@ mod tests {
     }
 
     #[test]
+    fn duration_is_presented_with_or_without_leftover_seconds() {
+        assert_eq!(spelled_duration(300), "5 min");
+        assert_eq!(spelled_duration(270), "4 min 30 s");
+        assert_eq!(spelled_duration(45), "45 s");
+        assert_eq!(compact_duration(300), "5");
+        assert_eq!(compact_duration(270), "4:30");
+        assert_eq!(compact_duration(3605), "60:05");
+    }
+
+    #[test]
     fn access_window_height_expands_only_with_the_selected_flow() {
         assert_eq!(access_height(false, false, false), ACCESS_ONCE_HEIGHT);
         assert_eq!(access_height(true, false, false), ACCESS_TIMED_EXACT_HEIGHT);
         assert_eq!(access_height(true, true, false), ACCESS_TIMED_PREFIX_HEIGHT);
         assert_eq!(access_height(false, false, true), 450.0);
         assert_eq!(access_height(true, true, true), ACCESS_MAX_HEIGHT);
+    }
+
+    /// Argument pills wrap into an unpredictable number of lines, so the flow
+    /// height is a floor and never a ceiling: a taller body must grow the window
+    /// instead of pushing the duration control under the bottom panels.
+    #[test]
+    fn access_window_height_grows_with_the_measured_body() {
+        assert_eq!(
+            access_window_height(ACCESS_ONCE_HEIGHT, None),
+            ACCESS_ONCE_HEIGHT
+        );
+        assert_eq!(
+            access_window_height(ACCESS_ONCE_HEIGHT, Some(200.0)),
+            ACCESS_ONCE_HEIGHT,
+            "a short body must not shrink the window below its flow"
+        );
+        assert_eq!(
+            access_window_height(ACCESS_ONCE_HEIGHT, Some(ACCESS_ONCE_HEIGHT + 70.0)),
+            ACCESS_ONCE_HEIGHT + 70.0
+        );
+        assert_eq!(
+            access_window_height(ACCESS_TIMED_PREFIX_HEIGHT, Some(2000.0)),
+            ACCESS_MAX_HEIGHT
+        );
+    }
+
+    /// The floor-and-cap logic only helps if the measurement itself reacts to
+    /// wrapped pills, so measure a real body: a long invocation must come out
+    /// taller than a short one at the same window width.
+    #[test]
+    fn a_long_invocation_measures_a_taller_body() {
+        let short = measured_body_height(vec!["s3".into(), "ls".into()]);
+        let wrapped = measured_body_height(
+            (0..24)
+                .map(|index| format!("--parametro-de-nome-longo-{index}"))
+                .collect(),
+        );
+
+        assert!(short > 0.0, "the short body measured nothing");
+        assert!(
+            wrapped > short,
+            "wrapped pills must measure taller: {wrapped} vs {short}"
+        );
     }
 
     #[test]
@@ -1972,22 +2194,13 @@ mod tests {
     }
 
     #[test]
-    fn target_add_hold_requires_two_continuous_seconds() {
+    fn target_add_hold_requires_the_full_duration_without_release() {
         let now = Instant::now();
         let mut state = HoldState::default();
 
+        assert_eq!(hold_update(&mut state, true, true, true, now), (0.0, false));
         assert_eq!(
-            hold_update(&mut state, true, true, true, now),
-            (0.0, false)
-        );
-        assert_eq!(
-            hold_update(
-                &mut state,
-                true,
-                true,
-                true,
-                now + HOLD_DURATION / 2,
-            ),
+            hold_update(&mut state, true, true, true, now + HOLD_DURATION / 2,),
             (0.5, false)
         );
         assert!(
@@ -2063,13 +2276,7 @@ mod tests {
             (0.0, false)
         );
         assert_eq!(
-            hold_update(
-                &mut state,
-                true,
-                true,
-                true,
-                now + HOLD_DURATION / 2,
-            ),
+            hold_update(&mut state, true, true, true, now + HOLD_DURATION / 2,),
             (0.5, false)
         );
         assert_eq!(

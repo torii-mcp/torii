@@ -591,8 +591,19 @@ impl Invoker {
                 rule: Some(evidence.reference()),
             });
         }
-        let choice =
-            control::ask_access(audit_scope, args, self.settings.default_grant_minutes).await?;
+        // `now` is captured before the prompt, so an alignment offered here lands
+        // exactly on the older grant's deadline no matter how long the human
+        // takes to decide.
+        let align_seconds = grants::oldest_active_expiry(&loaded.active)
+            .map(|expiry| u32::try_from(expiry.saturating_sub(now)).unwrap_or(u32::MAX))
+            .filter(|remaining| *remaining > 0);
+        let choice = control::ask_access(
+            audit_scope,
+            args,
+            self.settings.default_grant_minutes,
+            align_seconds,
+        )
+        .await?;
         match choice {
             AccessChoice::Deny => {
                 audit::log(&self.paths, audit_scope, "denied-interface", audit_rule, "");
@@ -610,7 +621,7 @@ impl Invoker {
                     rule: None,
                 })
             }
-            AccessChoice::AllowFor { minutes, selection } => {
+            AccessChoice::AllowFor { seconds, selection } => {
                 let Some(matcher) = grants::GrantMatcher::from_selection(args, selection) else {
                     audit::log(
                         &self.paths,
@@ -625,14 +636,13 @@ impl Invoker {
                         rule: None,
                     });
                 };
-                let evidence =
-                    grants::add(grants_path, &matcher, now + u64::from(minutes) * 60, now)?;
+                let evidence = grants::add(grants_path, &matcher, now + u64::from(seconds), now)?;
                 audit::log(
                     &self.paths,
                     audit_scope,
                     "override-timed",
                     audit_rule,
-                    &format!("{minutes}min"),
+                    &audit_grant_duration(seconds),
                 );
                 Ok(PolicyDecision {
                     result: DecisionResult::Allow,
@@ -641,6 +651,16 @@ impl Invoker {
                 })
             }
         }
+    }
+}
+
+/// Whole minutes keep the historical `2min` shape; an alignment with an older
+/// grant adds the leftover seconds.
+fn audit_grant_duration(seconds: u32) -> String {
+    if seconds.is_multiple_of(60) {
+        format!("{}min", seconds / 60)
+    } else {
+        format!("{}min{}s", seconds / 60, seconds % 60)
     }
 }
 

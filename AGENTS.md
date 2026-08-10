@@ -27,7 +27,7 @@ O repositório irmão `../awsgate` é somente referência. Nunca edite, formate,
 2. Deny explícito sempre vence accept, grant e aprovação humana.
 3. Matching é por prefixo de tokens, nunca por `String::starts_with` na linha reconstruída.
 4. O MCP recebe `args: string[]` e, em providers target-aware, `target`; preserve `args` como vetor até `Command::args` e resolva o target somente por configuração humana.
-5. Nunca use shell (`bash -c`, `sh -c`, `cmd /c`, PowerShell para encaminhar providers).
+5. Nunca monte linha de shell para encaminhar providers (`bash -c`, `sh -c`, `cmd /c`, PowerShell). No Windows, um `command` que resolve para wrapper `.bat`/`.cmd` é carregado pelo `cmd.exe` pelo próprio sistema; os argumentos continuam seguindo como vetor até `Command::args`, e um argumento que a citação de batch não consiga expressar precisa falhar o launch em vez de chegar ambíguo.
 6. Política é avaliada antes de ler `.env`, credenciais ou cache de sessão.
 7. Credenciais são aplicadas somente ao processo filho; nunca use `std::env::set_var` para sessão.
 8. Não registre credenciais, clipboard, stdout/stderr completos ou a lista completa de argumentos.
@@ -46,7 +46,7 @@ O repositório irmão `../awsgate` é somente referência. Nunca edite, formate,
 - `src/core/`: orquestra decisão, sessão, execução e resposta.
 - `src/jasper/`: regras e grants; não executa processos nem lê credenciais.
 - `src/providers/`: schema, registry e lifecycle de autenticação.
-- `src/runtime/`: execução sem shell e limite de saída.
+- `src/runtime/`: resolução do executável, execução sem shell e limite de saída.
 - `src/control/`: interface humana de aprovação e autenticação.
 - `src/config/`: paths, settings e arquivos de ambiente.
 - `src/audit.rs`: eventos sanitizados e best-effort.

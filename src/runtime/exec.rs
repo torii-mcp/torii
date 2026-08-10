@@ -1,4 +1,5 @@
 use crate::error::{Error, Result};
+use crate::runtime::program;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::process::Stdio;
@@ -93,7 +94,7 @@ pub fn spawn_command_with_removed_env(
     removed_env: &[&str],
     max_output_bytes: usize,
 ) -> Result<RunningCommand> {
-    let mut command = Command::new(program);
+    let mut command = Command::new(program::resolve(program)?);
     command
         .args(args_prefix)
         .args(args)
@@ -131,7 +132,7 @@ pub async fn validate_command_with_removed_env(
     auth_env: &[(String, String)],
     removed_env: &[&str],
 ) -> Result<bool> {
-    let mut command = Command::new(program);
+    let mut command = Command::new(program::resolve(program)?);
     command
         .args(args)
         .stdin(Stdio::null())
@@ -193,6 +194,86 @@ fn remove_environment(command: &mut Command, removed_env: &[&str]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Windows has no way to launch a batch wrapper without `cmd.exe`, and the
+    /// Azure CLI ships exactly that. What must hold is that the argument vector
+    /// survives as data: `cmd.exe` may load the wrapper, but it must never treat
+    /// an argument as a command of its own.
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn a_batch_wrapper_receives_arguments_as_data_not_as_commands() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let breach = temp.path().join("breach.txt");
+        let wrapper = temp.path().join("tool.cmd");
+        std::fs::write(&wrapper, "@echo off\r\necho ARGS %*\r\n").unwrap();
+        let program = wrapper.to_string_lossy().to_string();
+        let args = vec![
+            "get".to_string(),
+            format!("& echo breach> {}", breach.display()),
+            "a|b".to_string(),
+            "c^d".to_string(),
+        ];
+
+        let result = run_command(&program, &[], &args, &[], &[], 64 * 1024)
+            .await
+            .unwrap();
+
+        assert_eq!(result.exit_code, 0);
+        assert!(
+            result.stdout.contains("& echo breach") && result.stdout.contains("a|b"),
+            "arguments must reach the wrapper intact: {:?}",
+            result.stdout
+        );
+        assert!(
+            !breach.exists(),
+            "cmd.exe reinterpreted an argument as a command"
+        );
+    }
+
+    /// An argument the batch quoting cannot express must fail the launch, never
+    /// reach `cmd.exe` in an ambiguous form.
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn a_batch_wrapper_rejects_an_argument_it_cannot_quote() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let wrapper = temp.path().join("tool.cmd");
+        std::fs::write(&wrapper, "@echo off\r\necho ARGS %*\r\n").unwrap();
+        let program = wrapper.to_string_lossy().to_string();
+
+        let error = run_command(
+            &program,
+            &[],
+            &["get".to_string(), "line\nbreak".to_string()],
+            &[],
+            &[],
+            64 * 1024,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(matches!(error, Error::Spawn { .. }), "unexpected: {error}");
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn a_command_missing_from_path_fails_before_any_launch() {
+        let error = run_command(
+            "executable-that-must-not-run",
+            &[],
+            &["get".to_string()],
+            &[],
+            &[],
+            64 * 1024,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(
+            matches!(error, Error::ProgramNotFound { .. }),
+            "unexpected: {error}"
+        );
+    }
+
     #[test]
     fn output_truncation_keeps_utf8_valid() {
         let (value, cut) = bounded_text("ábc".as_bytes(), 3);

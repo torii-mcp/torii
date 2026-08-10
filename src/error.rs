@@ -39,6 +39,8 @@ pub enum Error {
     InvalidRule { rule: String, reason: String },
     #[error("invalid env file {path}: {reason}")]
     EnvParse { path: PathBuf, reason: String },
+    #[error("could not find the executable {program:?} in PATH")]
+    ProgramNotFound { program: String },
     #[error("failed to launch {program:?}: {source}")]
     Spawn {
         program: String,

@@ -35,7 +35,7 @@ Toda mudança no fluxo deve preservar testes para:
 - `Replace`, `Add`, `Deny`, limites de 1 a 1.440 minutos, headless deny e CAS rejeitando uma decisão de janela obsoleta;
 - digest de binding invalidando lease após editar, remover ou recriar um alias;
 - `target clear` preservando grants, `.env`, cache, credenciais, `target.yaml` e processos já iniciados;
-- múltiplos aliases ativos permanecendo no schema; na janela, o alerta ocupa a largura disponível junto às ações e **Adicionar** só conclui depois de 2 segundos de pressão contínua, reiniciando ao soltar; o clique que traz uma janela sem foco para frente já inicia a contagem;
+- múltiplos aliases ativos permanecendo no schema; na janela, o alerta ocupa a largura disponível junto às ações e **Adicionar** só conclui depois de 1 segundo de pressão contínua, reiniciando ao soltar; o clique que traz uma janela sem foco para frente já inicia a contagem;
 - limite combinado de saída;
 - tools/list contendo uma tool por provider e nenhuma tool de controle.
 - pacote recusando rules base não vazio, setup recusando overwrite e update preservando rules/estado.
