@@ -7,6 +7,7 @@
 - [Instalação](getting-started/installation.md)
 - [Primeiros passos](getting-started/quickstart.md)
 - [Conectar um cliente MCP](getting-started/mcp-client.md)
+- [Referência rápida](getting-started/cheat-sheet.md)
 
 # Conceitos
 

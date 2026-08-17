@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Vulnerabilidade de segurança
+    url: https://github.com/torii-mcp/torii/security/advisories/new
+    about: Reporte privado; não abra issue pública para falhas de segurança.
+  - name: Documentação oficial
+    url: https://torii-mcp.github.io/torii/
+    about: Instalação, conceitos, guias, referência de CLI e API MCP.

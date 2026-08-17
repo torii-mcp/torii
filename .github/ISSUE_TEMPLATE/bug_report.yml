@@ -1,0 +1,50 @@
+name: Relatar bug
+description: Comportamento diferente do documentado no livro oficial
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Falhas de segurança não entram aqui. Use o
+        [reporte privado de vulnerabilidades](https://github.com/torii-mcp/torii/security/advisories/new).
+
+        Nunca inclua credenciais reais, tokens de sessão ou saída completa de comandos.
+  - type: input
+    id: version
+    attributes:
+      label: Versão
+      description: Saída de `torii --version`
+      placeholder: torii 0.2.0
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Ambiente
+      description: Sistema operacional, cliente MCP e provider envolvido
+      placeholder: Windows 11, Claude Code, provider kubectl
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Como reproduzir
+      description: |
+        Passos exatos, incluindo a chamada MCP (tool, target, args) e as ações humanas na janela.
+        Anexe o `provider.yaml` e o `rules.yaml` mínimos, sempre com contas e clusters fictícios.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Comportamento esperado
+      description: O que o livro oficial descreve e qual capítulo diz isso
+    validations:
+      required: true
+  - type: textarea
+    id: observed
+    attributes:
+      label: Comportamento observado
+      description: Inclua a decisão auditada (`allowed-by-rules`, `explicit-deny`, …) quando houver
+    validations:
+      required: true

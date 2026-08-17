@@ -14,8 +14,8 @@ O Torii não é um CLI multicloud e não substitui `aws`, `kubectl`, `az` ou `gc
 
 Antes de alterar comportamento, leia:
 
-1. `awsgate-para-torii.md`, a especificação de transformação;
-2. `docs/src/concepts/security-model.md`, os invariantes de segurança;
+1. `docs/src/concepts/security-model.md`, os invariantes de segurança;
+2. `docs/src/concepts/execution-flow.md`, o contrato de uma chamada;
 3. `docs/src/development/architecture.md`, o mapa do código;
 4. os testes relacionados à área alterada.
 

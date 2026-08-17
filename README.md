@@ -1,6 +1,8 @@
 # Torii
 
-> A [documentação oficial](docs/src/README.md) vive em `docs/` e é publicada com mdBook.
+> A [documentação oficial](https://torii-mcp.github.io/torii/) é publicada com mdBook a
+> partir de `docs/`. Comece pela [referência rápida](https://torii-mcp.github.io/torii/getting-started/cheat-sheet.html)
+> se você vai operar o Torii hoje.
 
 Torii é uma fronteira local de execução controlada para agentes:
 
@@ -10,13 +12,15 @@ agente → MCP stdio → Torii → Jasper → provider → executável real
 
 O humano continua usando `aws`, `kubectl`, `az` ou `gcloud` diretamente. O agente recebe uma única tool MCP por provider instalado. Providers simples usam `{ "args": string[] }`; providers target-aware exigem também um alias `target` configurado pelo humano. O Torii não usa shell, não oferece CLI operacional e não expõe tools de `kill`, `reauth`, configuração ou instalação ao agente.
 
-## Estado desta primeira versão
+## Estado desta versão
 
 - servidor MCP local por `stdio`, com lifecycle controlado pelo cliente;
 - registry de providers YAML e tools MCP dinâmicas;
 - gerenciador declarativo de pacotes com fontes local, archive, URL e catálogo canônico;
 - targets Kubernetes que resolvem aliases para contexts sem permitir override pelo agente;
-- Jasper com default deny, deny prioritário e matching por prefixo de tokens;
+- Jasper com default deny, deny prioritário e matching por prefixo de tokens, regras por
+  regex sobre o argv, `forbidden_args` e normalização restrita à avaliação;
+- aliases target-aware inativos por padrão, liberados por lease humano temporário;
 - grants temporários e aprovação humana em janela local;
 - autenticação genérica `environment` completa e `inherited` para providers sem coleta;
 - janela de autenticação gerada pelos campos do provider e clipboard com allowlist;
@@ -74,7 +78,14 @@ cargo run -- reauth aws
 Para cadastrar outro cluster Kubernetes usando um context já existente no kubeconfig:
 
 ```powershell
-cargo run -- target add kubectl cliente_hml --context eks-cliente-hml
+cargo run -- target add kubectl cliente_hml --context eks-cliente-hml --provider aws
+```
+
+Um alias nasce inativo. Antes de o agente usá-lo, o humano concede um lease temporário:
+
+```powershell
+cargo run -- target activate kubectl cliente_hml --for 30
+cargo run -- target status kubectl
 ```
 
 Para registrar o Torii no Codex, Claude Code, Gemini CLI ou Cursor e habilitar o bloqueio opcional de chamadas diretas aos executáveis dos providers:
@@ -131,6 +142,12 @@ mdbook build docs
 ```
 
 No Windows GNU, `eframe` precisa de uma instalação MinGW-w64 completa (`dlltool` e `as.exe`) no `PATH`, como no AWS Gate de referência.
+
+## Contribuir e reportar
+
+- mudanças e verificações obrigatórias: [`CONTRIBUTING.md`](CONTRIBUTING.md);
+- histórico por versão: [`CHANGELOG.md`](CHANGELOG.md);
+- falhas de segurança: [`SECURITY.md`](SECURITY.md), sempre por reporte privado.
 
 ## Licença
 
