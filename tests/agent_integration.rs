@@ -129,6 +129,86 @@ fn claude_gemini_and_cursor_hooks_use_their_native_denial_contracts() {
     );
     let cursor: Value = serde_json::from_slice(&cursor.stdout).unwrap();
     assert_eq!(cursor["permission"], "deny");
+
+    // O Antigravity descreve a chamada em toolCall e lê a linha de CommandLine.
+    let antigravity = hook(
+        &config,
+        "antigravity",
+        serde_json::json!({
+            "toolCall": {
+                "name": "run_command",
+                "args": { "CommandLine": "aws s3 ls", "Cwd": "/workspace" }
+            },
+            "stepIdx": 7
+        }),
+    );
+    let antigravity: Value = serde_json::from_slice(&antigravity.stdout).unwrap();
+    assert_eq!(antigravity["decision"], "deny");
+
+    // Outra tool do mesmo agente não é assunto do guard.
+    let unrelated = hook(
+        &config,
+        "antigravity",
+        serde_json::json!({
+            "toolCall": { "name": "view_file", "args": { "AbsolutePath": "/workspace/a" } }
+        }),
+    );
+    assert!(unrelated.stdout.is_empty());
+}
+
+#[test]
+fn antigravity_hook_lives_in_its_own_group_and_leaves_others_alone() {
+    let config = TempDir::new().unwrap();
+    let home = TempDir::new().unwrap();
+    let hooks_path = home.path().join("hooks.json");
+    std::fs::write(&hooks_path, r#"{"meu-linter":{"PostToolUse":[]}}"#).unwrap();
+
+    let install = torii()
+        .env("TORII_CONFIG_DIR", config.path())
+        .env("TORII_ANTIGRAVITY_HOME", home.path())
+        .args(["agent", "install", "antigravity", "--hook"])
+        .output()
+        .unwrap();
+    assert!(
+        install.status.success(),
+        "{}",
+        String::from_utf8_lossy(&install.stderr)
+    );
+
+    let mcp: Value = serde_json::from_str(
+        &std::fs::read_to_string(home.path().join("mcp_config.json")).unwrap(),
+    )
+    .unwrap();
+    assert!(mcp["mcpServers"]["torii"]["command"].is_string());
+
+    let hooks: Value =
+        serde_json::from_str(&std::fs::read_to_string(&hooks_path).unwrap()).unwrap();
+    let entries = hooks["torii-provider-boundary"]["PreToolUse"]
+        .as_array()
+        .unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0]["matcher"], "run_command");
+    assert_eq!(entries[0]["hooks"][0]["type"], "command");
+    assert_eq!(hooks["torii-provider-boundary"]["enabled"], true);
+    assert!(
+        hooks["meu-linter"].is_object(),
+        "outro grupo foi preservado"
+    );
+
+    let uninstall = torii()
+        .env("TORII_CONFIG_DIR", config.path())
+        .env("TORII_ANTIGRAVITY_HOME", home.path())
+        .args(["agent", "uninstall", "antigravity"])
+        .output()
+        .unwrap();
+    assert!(uninstall.status.success());
+    let hooks: Value =
+        serde_json::from_str(&std::fs::read_to_string(&hooks_path).unwrap()).unwrap();
+    assert!(
+        hooks.get("torii-provider-boundary").is_none(),
+        "o grupo do Torii deve sair inteiro, sem deixar carcaça"
+    );
+    assert!(hooks["meu-linter"].is_object());
 }
 
 #[test]

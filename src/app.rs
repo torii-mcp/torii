@@ -12,7 +12,10 @@ pub fn run() -> Result<i32> {
     }
     if let [command, agent, config_flag, config_dir] = args.as_slice() {
         if command == "__agent-hook"
-            && matches!(agent.as_str(), "codex" | "claude" | "gemini" | "cursor")
+            && matches!(
+                agent.as_str(),
+                "codex" | "claude" | "gemini" | "cursor" | "antigravity"
+            )
             && config_flag == "--config"
         {
             return crate::agents::codex::run_hook(&ConfigPaths::new(config_dir.into()), agent);
@@ -55,6 +58,7 @@ async fn run_async(args: Vec<String>) -> Result<i32> {
             println!("claude\tMCP and optional PreToolUse hook");
             println!("gemini\tMCP and optional BeforeTool hook");
             println!("cursor\tMCP and optional beforeShellExecution hook");
+            println!("antigravity\tMCP and optional PreToolUse hook on run_command");
             println!("opencode\tMCP only; opencode has no pre-execution hook");
             println!("copilot\tMCP only; GitHub Copilot in VS Code has no pre-execution hook");
             println!("copilot-cli\tMCP only; GitHub Copilot CLI has no pre-execution hook");
@@ -284,7 +288,14 @@ fn version_text() -> String {
 fn is_portable_agent(agent: &str) -> bool {
     matches!(
         agent,
-        "claude" | "gemini" | "cursor" | "opencode" | "copilot" | "copilot-cli" | "pi"
+        "claude"
+            | "gemini"
+            | "cursor"
+            | "antigravity"
+            | "opencode"
+            | "copilot"
+            | "copilot-cli"
+            | "pi"
     )
 }
 
@@ -342,7 +353,7 @@ fn help_text(command: &[String]) -> Option<&'static str> {
         ["target", "list"] => Some("Usage:\n  torii target list <provider-tool>\n\nLists aliases and their fixed bindings in the human control plane."),
         ["target", "show"] => Some("Usage:\n  torii target show <provider-tool> <name>\n\nPrints the target configuration."),
         ["target", "remove"] => Some("Usage:\n  torii target remove <provider-tool> <name> --force\n\nRevokes the target authorization and removes the target and its isolated state. `--force` is required."),
-        ["agent"] => Some("Usage:\n  torii agent <command>\n\nCommands:\n  list\n  install <agent> [--hook] [--yes]\n  status <agent>\n  uninstall <agent> [--hook]\n\n<agent> is codex, claude, gemini, cursor, opencode, copilot, copilot-cli, or pi. Run `torii agent list` for what each adapter supports. The optional hook redirects direct provider CLI attempts to the corresponding MCP tool and exists only for agents that offer a pre-execution hook."),
+        ["agent"] => Some("Usage:\n  torii agent <command>\n\nCommands:\n  list\n  install <agent> [--hook] [--yes]\n  status <agent>\n  uninstall <agent> [--hook]\n\n<agent> is codex, claude, gemini, cursor, antigravity, opencode, copilot, copilot-cli, or pi. Run `torii agent list` for what each adapter supports. The optional hook redirects direct provider CLI attempts to the corresponding MCP tool and exists only for agents that offer a pre-execution hook."),
         ["agent", "list"] => Some("Usage:\n  torii agent list\n\nLists the implemented agent adapters and whether each one supports the hook."),
         ["agent", "install"] => Some("Usage:\n  torii agent install <agent> [--hook] [--yes]\n\nRegisters the Torii MCP server in the selected agent configuration. `--hook` also installs the direct-provider CLI guard and is rejected for agents without a pre-execution hook. `--yes` confirms an adapter that needs acknowledgement, such as pi, whose MCP support depends on an extension installed by the human."),
         ["agent", "status"] => Some("Usage:\n  torii agent status <agent>\n\nShows whether the MCP integration and hook are installed and managed by this Torii configuration. Agents without a pre-execution hook report the hook as unsupported."),

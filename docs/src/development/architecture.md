@@ -7,7 +7,7 @@ src/
 ├── app.rs                  startup e CLI de controle
 ├── targets.rs              control plane de targets
 ├── agents/codex.rs         integração Codex e guard compartilhado de shell
-├── agents/portable.rs      adapters JSON: Claude, Gemini, Cursor, opencode, Copilot e pi
+├── agents/portable.rs      adapters JSON: Claude, Gemini, Cursor, Antigravity, opencode, Copilot e pi
 ├── mcp/server.rs           protocolo e tools dinâmicas
 ├── core/invoke.rs          orquestração de uma chamada
 ├── target_access.rs         leases temporários de aliases target-aware

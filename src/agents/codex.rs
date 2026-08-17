@@ -158,6 +158,13 @@ fn is_relevant_hook_event(agent: &str, hook: &Value) -> bool {
         "codex" | "claude" => event == Some("PreToolUse") && tool == Some("Bash"),
         "gemini" => event == Some("BeforeTool") && tool == Some("run_shell_command"),
         "cursor" => event == Some("beforeShellExecution"),
+        // O Antigravity não repete o nome do evento no payload; ele descreve a tool chamada.
+        "antigravity" => {
+            hook.get("toolCall")
+                .and_then(|call| call.get("name"))
+                .and_then(Value::as_str)
+                == Some("run_command")
+        }
         _ => false,
     }
 }
@@ -166,11 +173,16 @@ fn hook_command_from_input(agent: &str, hook: &Value) -> Option<String> {
     if !is_relevant_hook_event(agent, hook) {
         return None;
     }
-    let command = if agent == "cursor" {
-        hook.get("command")
-    } else {
-        hook.get("tool_input")
-            .and_then(|input| input.get("command"))
+    let command = match agent {
+        "cursor" => hook.get("command"),
+        // `run_command` carrega a linha inteira em toolCall.args.CommandLine.
+        "antigravity" => hook
+            .get("toolCall")
+            .and_then(|call| call.get("args"))
+            .and_then(|args| args.get("CommandLine")),
+        _ => hook
+            .get("tool_input")
+            .and_then(|input| input.get("command")),
     }?;
     match command {
         Value::String(command) => Some(command.clone()),
@@ -788,7 +800,7 @@ fn print_denial(agent: &str, reason: String) -> Result<()> {
                 "permissionDecisionReason": reason
             }
         }),
-        "gemini" => json!({
+        "gemini" | "antigravity" => json!({
             "decision": "deny",
             "reason": reason
         }),

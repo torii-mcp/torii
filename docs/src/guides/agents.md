@@ -1,6 +1,6 @@
 # Integrar agentes e instalar o hook
 
-O Torii integra Codex, Claude Code, Gemini CLI, Cursor, opencode, GitHub Copilot (VS Code e CLI) e pi. A integração é control plane humano: nenhum comando desta página aparece como tool MCP.
+O Torii integra Codex, Claude Code, Gemini CLI, Cursor, Antigravity, opencode, GitHub Copilot (VS Code e CLI) e pi. A integração é control plane humano: nenhum comando desta página aparece como tool MCP.
 
 Liste os adapters disponíveis e o que cada um suporta:
 
@@ -18,7 +18,7 @@ Nem todo cliente oferece as duas metades da integração. O hook depende de o cl
 
 | Adapter | MCP | Hook |
 |---|---|---|
-| `codex`, `claude`, `gemini`, `cursor` | sim | sim |
+| `codex`, `claude`, `gemini`, `cursor`, `antigravity` | sim | sim |
 | `opencode`, `copilot`, `copilot-cli` | sim | não existe no cliente |
 | `pi` | somente através de uma extensão MCP instalada por você | não implementado pelo Torii |
 
@@ -46,6 +46,7 @@ Para um target `aws_profile`, a conta ou o profile não são expostos ao agente.
 | Claude Code | `~/.claude.json` | `mcpServers` | `~/.claude/settings.json` |
 | Gemini CLI | `$GEMINI_CLI_HOME/.gemini/settings.json` | `mcpServers` | o mesmo `settings.json` |
 | Cursor | `~/.cursor/mcp.json` | `mcpServers` | `~/.cursor/hooks.json` |
+| Antigravity | `~/.gemini/config/mcp_config.json` | `mcpServers` | `~/.gemini/config/hooks.json` |
 | opencode | `$XDG_CONFIG_HOME/opencode/opencode.json` | `mcp` | — |
 | Copilot no VS Code | `mcp.json` do perfil do usuário | `servers` | — |
 | Copilot CLI | `$COPILOT_HOME/mcp-config.json` | `mcpServers` | — |
@@ -55,7 +56,9 @@ Sem as variáveis de override, Codex usa `~/.codex`, Gemini usa `~/.gemini`, ope
 
 O perfil de usuário do VS Code depende do sistema: `%APPDATA%\Code\User` no Windows, `~/Library/Application Support/Code/User` no macOS e `$XDG_CONFIG_HOME/Code/User` no Linux. Use `TORII_COPILOT_HOME` para apontar outro perfil, por exemplo o do VS Code Insiders.
 
-Os overrides `TORII_CURSOR_HOME`, `TORII_OPENCODE_HOME`, `TORII_COPILOT_HOME`, `TORII_COPILOT_CLI_HOME` e `TORII_PI_HOME` selecionam outro diretório, principalmente para automação e testes.
+Os overrides `TORII_CURSOR_HOME`, `TORII_ANTIGRAVITY_HOME`, `TORII_OPENCODE_HOME`, `TORII_COPILOT_HOME`, `TORII_COPILOT_CLI_HOME` e `TORII_PI_HOME` selecionam outro diretório, principalmente para automação e testes.
+
+O Antigravity compartilha `~/.gemini/config/` entre IDE e CLI, então uma instalação atende as duas superfícies. Esse diretório é vizinho do Gemini CLI, mas os arquivos são distintos: o Gemini usa `~/.gemini/settings.json` e o Antigravity usa `~/.gemini/config/mcp_config.json`. Os dois adapters podem coexistir sem se sobrescrever.
 
 Cada cliente recebe o formato que ele mesmo entende: opencode declara `type: local` com o comando em vetor e o ambiente em `environment`; a CLI do Copilot chama stdio de `local` e exige a lista `tools`; Claude e Copilot no VS Code usam `type: stdio`. O Torii escreve apenas a entrada `torii` e preserva o resto do arquivo.
 
@@ -92,8 +95,11 @@ Cada adapter usa o evento nativo do cliente:
 | Claude Code | `PreToolUse` | `Bash` |
 | Gemini CLI | `BeforeTool` | `run_shell_command` |
 | Cursor | `beforeShellExecution` | shell do agente |
+| Antigravity | `PreToolUse` com matcher | `run_command` |
 
 Antes da chamada, o cliente envia o comando ao próprio Torii. O guard carrega o registry atual e compara o executável tentado com o campo `command` de cada provider.
+
+Cada cliente também tem seu formato de arquivo e de resposta. O Antigravity guarda hooks por grupo nomeado, não em um objeto `hooks` compartilhado: o Torii cria o grupo `torii-provider-boundary`, é dono dele por inteiro e o remove por completo na desinstalação, sem tocar nos seus outros grupos. A negação sai como `{"decision":"deny","reason":"…"}`.
 
 Com um provider que declara `command: kubectl`, esta tentativa é bloqueada:
 

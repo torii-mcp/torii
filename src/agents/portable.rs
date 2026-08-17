@@ -34,7 +34,19 @@ struct Spec {
 struct HookSpec {
     path: PathBuf,
     event: &'static str,
+    layout: HookLayout,
 }
+
+/// Onde o arquivo de hooks guarda o array de entradas de um evento.
+enum HookLayout {
+    /// `hooks.<evento>`, usado por Claude Code, Gemini CLI e Cursor.
+    SharedEvent,
+    /// `<nome-do-grupo>.<evento>`, usado pelo Antigravity: o grupo inteiro é do Torii.
+    OwnedGroup,
+}
+
+/// Nome do grupo de hooks que pertence ao Torii em arquivos com layout `OwnedGroup`.
+const HOOK_GROUP: &str = "torii-provider-boundary";
 
 impl Spec {
     fn hook(&self) -> Result<&HookSpec> {
@@ -325,6 +337,11 @@ fn spec(agent: &str) -> Result<Spec> {
             .map(PathBuf::from)
             .map(Ok)
             .unwrap_or_else(|| vscode_user_home(&home))?,
+        // Antigravity IDE e CLI compartilham a mesma raiz de customização.
+        "antigravity" => std::env::var_os("TORII_ANTIGRAVITY_HOME")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join(".gemini").join("config")),
         "pi" => std::env::var_os("TORII_PI_HOME")
             .filter(|value| !value.is_empty())
             .map(PathBuf::from)
@@ -357,6 +374,7 @@ fn spec_at(agent: &str, config_home: PathBuf) -> Result<Spec> {
                 hook: Some(HookSpec {
                     path: hooks_path,
                     event: "PreToolUse",
+                    layout: HookLayout::SharedEvent,
                 }),
                 config_home,
             })
@@ -369,6 +387,7 @@ fn spec_at(agent: &str, config_home: PathBuf) -> Result<Spec> {
             hook: Some(HookSpec {
                 path: config_home.join("settings.json"),
                 event: "BeforeTool",
+                layout: HookLayout::SharedEvent,
             }),
             config_home,
         }),
@@ -380,6 +399,7 @@ fn spec_at(agent: &str, config_home: PathBuf) -> Result<Spec> {
             hook: Some(HookSpec {
                 path: config_home.join("hooks.json"),
                 event: "beforeShellExecution",
+                layout: HookLayout::SharedEvent,
             }),
             config_home,
         }),
@@ -400,6 +420,20 @@ fn spec_at(agent: &str, config_home: PathBuf) -> Result<Spec> {
             mcp_path: config_home.join("mcp.json"),
             mcp_key: "servers",
             hook: None,
+            config_home,
+        }),
+        // Antigravity guarda cada grupo de hooks sob seu próprio nome, em vez de um objeto
+        // "hooks" compartilhado.
+        "antigravity" => Ok(Spec {
+            name: "antigravity",
+            display_name: "Antigravity",
+            mcp_path: config_home.join("mcp_config.json"),
+            mcp_key: "mcpServers",
+            hook: Some(HookSpec {
+                path: config_home.join("hooks.json"),
+                event: "PreToolUse",
+                layout: HookLayout::OwnedGroup,
+            }),
             config_home,
         }),
         // pi não fala MCP nativamente; extensões MCP da comunidade leem este mcp.json no
@@ -453,7 +487,7 @@ fn desired_mcp_entry(spec: &Spec, executable: &Path, config: &Path) -> Result<Va
             "args": [],
             "env": { "TORII_CONFIG_DIR": config }
         })),
-        "gemini" | "cursor" | "pi" => Ok(json!({
+        "gemini" | "cursor" | "pi" | "antigravity" => Ok(json!({
             "command": command,
             "args": [],
             "env": { "TORII_CONFIG_DIR": config }
@@ -534,6 +568,15 @@ fn desired_hook_entry(spec: &Spec, executable: &Path, config: &Path) -> Result<V
             "timeout": 5,
             "description": HOOK_MARKER
         })),
+        // O Antigravity chama a tool de terminal de `run_command`.
+        "antigravity" => Ok(json!({
+            "matcher": "run_command",
+            "hooks": [{
+                "type": "command",
+                "command": hook_command(&executable, &config, "antigravity"),
+                "timeout": 5
+            }]
+        })),
         _ => Err(Error::Agent(format!("unsupported agent {:?}", spec.name))),
     }
 }
@@ -564,27 +607,37 @@ fn remove_mcp_entry(root: &mut Value, spec: &Spec) -> Result<()> {
 }
 
 fn hook_array_mut<'a>(root: &'a mut Value, spec: &Spec) -> Result<&'a mut Vec<Value>> {
-    let event_name = spec.hook()?.event;
+    let hook = spec.hook()?;
+    let event_name = hook.event;
+    let (group_key, group_default) = match hook.layout {
+        HookLayout::SharedEvent => ("hooks", json!({})),
+        // O grupo pertence inteiramente ao Torii, então nasce habilitado.
+        HookLayout::OwnedGroup => (HOOK_GROUP, json!({ "enabled": true })),
+    };
     let object = object_mut(root, "agent hooks root")?;
-    let hooks = object
-        .entry("hooks")
-        .or_insert_with(|| Value::Object(Map::new()));
-    let hooks = object_mut(hooks, "hooks")?;
-    let event = hooks
+    let group = object.entry(group_key).or_insert(group_default);
+    let group = object_mut(group, group_key)?;
+    let event = group
         .entry(event_name)
         .or_insert_with(|| Value::Array(Vec::new()));
     event.as_array_mut().ok_or_else(|| {
         Error::Agent(format!(
-            "{}.hooks.{} must be an array",
-            spec.display_name, event_name
+            "{}.{}.{} must be an array",
+            spec.display_name, group_key, event_name
         ))
     })
 }
 
+fn hook_group_key(hook: &HookSpec) -> &'static str {
+    match hook.layout {
+        HookLayout::SharedEvent => "hooks",
+        HookLayout::OwnedGroup => HOOK_GROUP,
+    }
+}
+
 fn hook_array<'a>(root: &'a Value, spec: &Spec) -> Option<&'a Vec<Value>> {
-    root.get("hooks")?
-        .get(spec.hook.as_ref()?.event)?
-        .as_array()
+    let hook = spec.hook.as_ref()?;
+    root.get(hook_group_key(hook))?.get(hook.event)?.as_array()
 }
 
 fn find_hook<'a>(root: &'a Value, spec: &Spec) -> Option<&'a Value> {
@@ -610,6 +663,9 @@ fn is_torii_hook(entry: &Value, spec: &Spec) -> bool {
                 hook.get("name").and_then(Value::as_str) == Some("torii-provider-boundary")
             }),
         "cursor" => entry.get("description").and_then(Value::as_str) == Some(HOOK_MARKER),
+        // O schema do Antigravity não tem campo livre para marcador, mas o grupo inteiro é
+        // do Torii: qualquer entrada dentro dele nos pertence.
+        "antigravity" => true,
         _ => false,
     }
 }
@@ -620,7 +676,15 @@ fn add_hook(root: &mut Value, spec: &Spec, entry: Value) -> Result<()> {
 }
 
 fn remove_hook(root: &mut Value, spec: &Spec, expected: &Value) -> Result<()> {
-    hook_array_mut(root, spec)?.retain(|entry| entry != expected);
+    let empty = {
+        let entries = hook_array_mut(root, spec)?;
+        entries.retain(|entry| entry != expected);
+        entries.is_empty()
+    };
+    // Num grupo próprio, um array vazio deixaria só a carcaça do Torii no arquivo.
+    if empty && matches!(spec.hook()?.layout, HookLayout::OwnedGroup) {
+        object_mut(root, "agent hooks root")?.remove(HOOK_GROUP);
+    }
     Ok(())
 }
 

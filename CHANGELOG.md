@@ -8,9 +8,12 @@ Todas as mudanças relevantes deste projeto são registradas aqui. O formato seg
 
 ### Adicionado
 
-- adapters de agente para opencode, GitHub Copilot no VS Code, GitHub Copilot CLI e pi, cada
-  um escrito no formato nativo do cliente (`mcp` com comando em vetor no opencode, `servers`
-  no Copilot do VS Code, `mcpServers` com `tools` na CLI do Copilot);
+- adapters de agente para Antigravity, opencode, GitHub Copilot no VS Code, GitHub Copilot CLI
+  e pi, cada um escrito no formato nativo do cliente (`mcp` com comando em vetor no opencode,
+  `servers` no Copilot do VS Code, `mcpServers` com `tools` na CLI do Copilot);
+- guard do Antigravity pelo evento `PreToolUse` com matcher em `run_command`, lendo a linha em
+  `toolCall.args.CommandLine` e negando com `{"decision":"deny"}`; o Torii mantém um grupo de
+  hooks próprio em `~/.gemini/config/hooks.json` e o remove inteiro na desinstalação;
 - `--yes` em `agent install` para confirmar o adapter do pi, cujo suporte a MCP depende de uma
   extensão instalada pelo humano; sem terminal interativo a instalação é recusada;
 - guias de provider para Azure (`az`) e Snowflake (`snow`).
