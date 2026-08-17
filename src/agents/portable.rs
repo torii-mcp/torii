@@ -1,4 +1,4 @@
-use std::io::Write;
+use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -25,12 +25,39 @@ struct Spec {
     display_name: &'static str,
     config_home: PathBuf,
     mcp_path: PathBuf,
-    hooks_path: PathBuf,
-    hook_event: &'static str,
+    /// Chave de objeto que o agente usa para declarar servidores MCP.
+    mcp_key: &'static str,
+    /// Ausente quando o agente não oferece interceptação antes da execução.
+    hook: Option<HookSpec>,
 }
 
-pub fn install(paths: &ConfigPaths, agent: &str, with_hook: bool) -> Result<()> {
+struct HookSpec {
+    path: PathBuf,
+    event: &'static str,
+}
+
+impl Spec {
+    fn hook(&self) -> Result<&HookSpec> {
+        self.hook.as_ref().ok_or_else(|| {
+            Error::Agent(format!(
+                "{} does not offer a pre-execution hook, so Torii cannot block direct provider calls there; install the MCP integration without --hook",
+                self.display_name
+            ))
+        })
+    }
+
+    fn hooks_path(&self) -> Option<&Path> {
+        self.hook.as_ref().map(|hook| hook.path.as_path())
+    }
+}
+
+pub fn install(paths: &ConfigPaths, agent: &str, with_hook: bool, assume_yes: bool) -> Result<()> {
     let spec = spec(agent)?;
+    if with_hook {
+        // Falha antes de escrever qualquer arquivo quando o agente não tem hook.
+        spec.hook()?;
+    }
+    confirm_indirect_mcp(&spec, assume_yes)?;
     let executable = current_executable()?;
     install_at(paths, &spec, &executable, with_hook)?;
     eprintln!(
@@ -47,16 +74,58 @@ pub fn install(paths: &ConfigPaths, agent: &str, with_hook: bool) -> Result<()> 
     Ok(())
 }
 
+/// Agentes que não falam MCP por conta própria dependem de uma extensão instalada pelo
+/// humano. O Torii escreve a configuração, mas avisa antes que ela pode não ser lida.
+fn confirm_indirect_mcp(spec: &Spec, assume_yes: bool) -> Result<()> {
+    if spec.name != "pi" {
+        return Ok(());
+    }
+    eprintln!(
+        "{} does not support MCP natively: reading this configuration depends on an MCP extension installed in pi.",
+        spec.display_name
+    );
+    eprintln!(
+        "Torii will write {} anyway. Without such an extension, pi simply ignores it and nothing works.",
+        spec.mcp_path.display()
+    );
+    eprintln!("If you do not know which extension this refers to, do not continue.");
+    if assume_yes {
+        eprintln!("Continuing because --yes was passed.");
+        return Ok(());
+    }
+    if !std::io::stdin().is_terminal() {
+        return Err(Error::Agent(format!(
+            "refusing to configure {} without a human confirmation; rerun with --yes if you already have an MCP extension in pi",
+            spec.display_name
+        )));
+    }
+    eprint!("Do you already have an MCP extension in pi and want to continue? [y/N] ");
+    std::io::stderr().flush().map_err(|error| {
+        Error::Agent(format!("could not write the confirmation prompt: {error}"))
+    })?;
+    let mut answer = String::new();
+    std::io::stdin()
+        .read_line(&mut answer)
+        .map_err(|error| Error::Agent(format!("could not read the confirmation: {error}")))?;
+    if !matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes") {
+        return Err(Error::Agent(format!(
+            "{} integration was not installed",
+            spec.display_name
+        )));
+    }
+    Ok(())
+}
+
 pub fn print_status(paths: &ConfigPaths, agent: &str) -> Result<()> {
     let spec = spec_from_state(paths, agent)?;
     let state = read_state(&state_path(paths, agent))?;
     let mcp = read_json_object(&spec.mcp_path)?;
-    let hooks = if spec.hooks_path == spec.mcp_path {
-        mcp.clone()
-    } else {
-        read_json_object(&spec.hooks_path)?
+    let hooks = match spec.hooks_path() {
+        None => Value::Object(Map::new()),
+        Some(path) if path == spec.mcp_path => mcp.clone(),
+        Some(path) => read_json_object(path)?,
     };
-    let mcp_entry = mcp_entry(&mcp);
+    let mcp_entry = mcp_entry(&mcp, &spec);
     let hook_entry = find_hook(&hooks, &spec);
     let mcp_managed = mcp_entry.is_some()
         && state
@@ -68,7 +137,11 @@ pub fn print_status(paths: &ConfigPaths, agent: &str) -> Result<()> {
             .is_some_and(|state| state.hook_owned && hook_entry == Some(&state.hook_entry));
     println!("config_home\t{}", spec.config_home.display());
     println!("mcp\t{}", status_label(mcp_entry.is_some(), mcp_managed));
-    println!("hook\t{}", status_label(hook_entry.is_some(), hook_managed));
+    if spec.hook.is_none() {
+        println!("hook\tnot supported by {}", spec.display_name);
+    } else {
+        println!("hook\t{}", status_label(hook_entry.is_some(), hook_managed));
+    }
     Ok(())
 }
 
@@ -82,10 +155,17 @@ pub fn uninstall(paths: &ConfigPaths, agent: &str, hook_only: bool) -> Result<()
         )));
     };
 
+    if hook_only && spec.hook.is_none() {
+        return Err(Error::Agent(format!(
+            "{} has no Torii hook to remove: that agent does not offer a pre-execution hook",
+            spec.display_name
+        )));
+    }
+
     if !hook_only && state.mcp_owned {
         let mut root = read_json_object(&spec.mcp_path)?;
-        match mcp_entry(&root) {
-            Some(entry) if entry == &state.mcp_entry => remove_mcp_entry(&mut root)?,
+        match mcp_entry(&root, &spec) {
+            Some(entry) if entry == &state.mcp_entry => remove_mcp_entry(&mut root, &spec)?,
             None => {}
             Some(_) => {
                 return Err(Error::Agent(format!(
@@ -99,7 +179,8 @@ pub fn uninstall(paths: &ConfigPaths, agent: &str, hook_only: bool) -> Result<()
     }
 
     if state.hook_owned {
-        let mut root = read_json_object(&spec.hooks_path)?;
+        let hooks_path = spec.hook()?.path.clone();
+        let mut root = read_json_object(&hooks_path)?;
         match find_hook(&root, &spec) {
             Some(entry) if entry == &state.hook_entry => {
                 remove_hook(&mut root, &spec, &state.hook_entry)?;
@@ -112,7 +193,7 @@ pub fn uninstall(paths: &ConfigPaths, agent: &str, hook_only: bool) -> Result<()
                 )));
             }
         }
-        write_json(&spec.hooks_path, &root)?;
+        write_json(&hooks_path, &root)?;
         state.hook_owned = false;
     }
 
@@ -159,16 +240,17 @@ fn install_at(paths: &ConfigPaths, spec: &Spec, executable: &Path, with_hook: bo
         )));
     }
 
+    refuse_shadowed_config(spec)?;
     let desired_mcp = desired_mcp_entry(spec, executable, paths.base())?;
     let mut mcp = read_json_object(&spec.mcp_path)?;
-    match mcp_entry(&mcp) {
+    match mcp_entry(&mcp, spec) {
         None => {
-            set_mcp_entry(&mut mcp, desired_mcp.clone())?;
+            set_mcp_entry(&mut mcp, spec, desired_mcp.clone())?;
             state.mcp_owned = true;
         }
         Some(existing) if existing == &desired_mcp => {}
         Some(existing) if state.mcp_owned && existing == &state.mcp_entry => {
-            set_mcp_entry(&mut mcp, desired_mcp.clone())?;
+            set_mcp_entry(&mut mcp, spec, desired_mcp.clone())?;
         }
         Some(_) => {
             return Err(Error::Agent(format!(
@@ -181,7 +263,8 @@ fn install_at(paths: &ConfigPaths, spec: &Spec, executable: &Path, with_hook: bo
 
     let desired_hook = desired_hook_entry(spec, executable, paths.base())?;
     if with_hook {
-        let mut hooks = read_json_object(&spec.hooks_path)?;
+        let hooks_path = spec.hook()?.path.clone();
+        let mut hooks = read_json_object(&hooks_path)?;
         if state.hook_owned {
             remove_stale_hooks(&mut hooks, spec, &desired_hook)?;
         }
@@ -195,7 +278,7 @@ fn install_at(paths: &ConfigPaths, spec: &Spec, executable: &Path, with_hook: bo
             add_hook(&mut hooks, spec, desired_hook.clone())?;
             state.hook_owned = true;
         }
-        write_json(&spec.hooks_path, &hooks)?;
+        write_json(&hooks_path, &hooks)?;
     }
 
     state.version = STATE_VERSION;
@@ -233,6 +316,25 @@ fn spec(agent: &str) -> Result<Spec> {
             .filter(|value| !value.is_empty())
             .map(PathBuf::from)
             .unwrap_or_else(|| home.join(".cursor")),
+        "opencode" => std::env::var_os("TORII_OPENCODE_HOME")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| xdg_config_home(&home).join("opencode")),
+        "copilot" => std::env::var_os("TORII_COPILOT_HOME")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+            .map(Ok)
+            .unwrap_or_else(|| vscode_user_home(&home))?,
+        "pi" => std::env::var_os("TORII_PI_HOME")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join(".pi").join("agent")),
+        // A CLI do Copilot respeita COPILOT_HOME; o override do Torii existe para testes.
+        "copilot-cli" => std::env::var_os("TORII_COPILOT_CLI_HOME")
+            .or_else(|| std::env::var_os("COPILOT_HOME"))
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join(".copilot")),
         _ => return Err(Error::Agent(format!("unsupported agent {agent:?}"))),
     };
     spec_at(agent, config_home)
@@ -251,47 +353,157 @@ fn spec_at(agent: &str, config_home: PathBuf) -> Result<Spec> {
                 name: "claude",
                 display_name: "Claude Code",
                 mcp_path: config_home.join(".claude.json"),
-                hooks_path,
+                mcp_key: "mcpServers",
+                hook: Some(HookSpec {
+                    path: hooks_path,
+                    event: "PreToolUse",
+                }),
                 config_home,
-                hook_event: "PreToolUse",
             })
         }
         "gemini" => Ok(Spec {
             name: "gemini",
             display_name: "Gemini CLI",
             mcp_path: config_home.join("settings.json"),
-            hooks_path: config_home.join("settings.json"),
+            mcp_key: "mcpServers",
+            hook: Some(HookSpec {
+                path: config_home.join("settings.json"),
+                event: "BeforeTool",
+            }),
             config_home,
-            hook_event: "BeforeTool",
         }),
         "cursor" => Ok(Spec {
             name: "cursor",
             display_name: "Cursor",
             mcp_path: config_home.join("mcp.json"),
-            hooks_path: config_home.join("hooks.json"),
+            mcp_key: "mcpServers",
+            hook: Some(HookSpec {
+                path: config_home.join("hooks.json"),
+                event: "beforeShellExecution",
+            }),
             config_home,
-            hook_event: "beforeShellExecution",
+        }),
+        // opencode declara servidores em "mcp" e só oferece plugins JavaScript, sem hook
+        // declarativo antes da execução.
+        "opencode" => Ok(Spec {
+            name: "opencode",
+            display_name: "opencode",
+            mcp_path: config_home.join("opencode.json"),
+            mcp_key: "mcp",
+            hook: None,
+            config_home,
+        }),
+        // Copilot no VS Code lê mcp.json do perfil do usuário e usa a chave "servers".
+        "copilot" => Ok(Spec {
+            name: "copilot",
+            display_name: "GitHub Copilot no VS Code",
+            mcp_path: config_home.join("mcp.json"),
+            mcp_key: "servers",
+            hook: None,
+            config_home,
+        }),
+        // pi não fala MCP nativamente; extensões MCP da comunidade leem este mcp.json no
+        // formato compartilhado com os demais hosts.
+        "pi" => Ok(Spec {
+            name: "pi",
+            display_name: "pi",
+            mcp_path: config_home.join("mcp.json"),
+            mcp_key: "mcpServers",
+            hook: None,
+            config_home,
+        }),
+        "copilot-cli" => Ok(Spec {
+            name: "copilot-cli",
+            display_name: "GitHub Copilot CLI",
+            mcp_path: config_home.join("mcp-config.json"),
+            mcp_key: "mcpServers",
+            hook: None,
+            config_home,
         }),
         _ => Err(Error::Agent(format!("unsupported agent {agent:?}"))),
     }
 }
 
+/// opencode segue a convenção XDG mesmo no Windows, por ser distribuído como ferramenta Node.
+fn xdg_config_home(home: &Path) -> PathBuf {
+    std::env::var_os("XDG_CONFIG_HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(".config"))
+}
+
+/// Perfil de usuário do VS Code: `%APPDATA%\Code\User`,
+/// `~/Library/Application Support/Code/User` ou `$XDG_CONFIG_HOME/Code/User`.
+fn vscode_user_home(home: &Path) -> Result<PathBuf> {
+    let base = if cfg!(windows) || cfg!(target_os = "macos") {
+        dirs::config_dir().ok_or(Error::NoConfigDirectory)?
+    } else {
+        xdg_config_home(home)
+    };
+    Ok(base.join("Code").join("User"))
+}
+
 fn desired_mcp_entry(spec: &Spec, executable: &Path, config: &Path) -> Result<Value> {
-    let mut entry = json!({
-        "command": path_string(executable)?,
-        "args": [],
-        "env": { "TORII_CONFIG_DIR": path_string(config)? }
-    });
-    if spec.name == "claude" {
-        entry
-            .as_object_mut()
-            .expect("object")
-            .insert("type".into(), Value::String("stdio".into()));
+    let command = path_string(executable)?;
+    let config = path_string(config)?;
+    match spec.name {
+        "claude" => Ok(json!({
+            "type": "stdio",
+            "command": command,
+            "args": [],
+            "env": { "TORII_CONFIG_DIR": config }
+        })),
+        "gemini" | "cursor" | "pi" => Ok(json!({
+            "command": command,
+            "args": [],
+            "env": { "TORII_CONFIG_DIR": config }
+        })),
+        // opencode recebe o comando como vetor e chama o bloco de ambiente "environment".
+        "opencode" => Ok(json!({
+            "type": "local",
+            "command": [command],
+            "enabled": true,
+            "environment": { "TORII_CONFIG_DIR": config }
+        })),
+        "copilot" => Ok(json!({
+            "type": "stdio",
+            "command": command,
+            "args": [],
+            "env": { "TORII_CONFIG_DIR": config }
+        })),
+        // A CLI do Copilot chama stdio de "local" e exige a lista de tools liberadas.
+        "copilot-cli" => Ok(json!({
+            "type": "local",
+            "command": command,
+            "args": [],
+            "env": { "TORII_CONFIG_DIR": config },
+            "tools": ["*"]
+        })),
+        _ => Err(Error::Agent(format!("unsupported agent {:?}", spec.name))),
     }
-    Ok(entry)
+}
+
+/// opencode também aceita `opencode.jsonc`, que o Torii não edita: reescrever o arquivo
+/// descartaria comentários, e manter os dois deixaria a configuração ambígua.
+fn refuse_shadowed_config(spec: &Spec) -> Result<()> {
+    if spec.name != "opencode" {
+        return Ok(());
+    }
+    let jsonc = spec.config_home.join("opencode.jsonc");
+    if jsonc.exists() {
+        return Err(Error::Agent(format!(
+            "{} already keeps its configuration in {}; Torii only edits plain JSON, so add the MCP server manually or migrate that file to opencode.json",
+            spec.display_name,
+            jsonc.display()
+        )));
+    }
+    Ok(())
 }
 
 fn desired_hook_entry(spec: &Spec, executable: &Path, config: &Path) -> Result<Value> {
+    if spec.hook.is_none() {
+        return Ok(Value::Null);
+    }
     let executable = path_string(executable)?;
     let config = path_string(config)?;
     match spec.name {
@@ -326,50 +538,53 @@ fn desired_hook_entry(spec: &Spec, executable: &Path, config: &Path) -> Result<V
     }
 }
 
-fn mcp_entry(root: &Value) -> Option<&Value> {
-    root.get("mcpServers")?.get("torii")
+fn mcp_entry<'a>(root: &'a Value, spec: &Spec) -> Option<&'a Value> {
+    root.get(spec.mcp_key)?.get("torii")
 }
 
-fn set_mcp_entry(root: &mut Value, entry: Value) -> Result<()> {
+fn set_mcp_entry(root: &mut Value, spec: &Spec, entry: Value) -> Result<()> {
     let object = object_mut(root, "agent configuration root")?;
     let servers = object
-        .entry("mcpServers")
+        .entry(spec.mcp_key)
         .or_insert_with(|| Value::Object(Map::new()));
-    object_mut(servers, "mcpServers")?.insert("torii".into(), entry);
+    object_mut(servers, spec.mcp_key)?.insert("torii".into(), entry);
     Ok(())
 }
 
-fn remove_mcp_entry(root: &mut Value) -> Result<()> {
-    let Some(servers) = root.get_mut("mcpServers") else {
+fn remove_mcp_entry(root: &mut Value, spec: &Spec) -> Result<()> {
+    let Some(servers) = root.get_mut(spec.mcp_key) else {
         return Ok(());
     };
-    let servers = object_mut(servers, "mcpServers")?;
+    let servers = object_mut(servers, spec.mcp_key)?;
     servers.remove("torii");
     if servers.is_empty() {
-        object_mut(root, "agent configuration root")?.remove("mcpServers");
+        object_mut(root, "agent configuration root")?.remove(spec.mcp_key);
     }
     Ok(())
 }
 
 fn hook_array_mut<'a>(root: &'a mut Value, spec: &Spec) -> Result<&'a mut Vec<Value>> {
+    let event_name = spec.hook()?.event;
     let object = object_mut(root, "agent hooks root")?;
     let hooks = object
         .entry("hooks")
         .or_insert_with(|| Value::Object(Map::new()));
     let hooks = object_mut(hooks, "hooks")?;
     let event = hooks
-        .entry(spec.hook_event)
+        .entry(event_name)
         .or_insert_with(|| Value::Array(Vec::new()));
     event.as_array_mut().ok_or_else(|| {
         Error::Agent(format!(
             "{}.hooks.{} must be an array",
-            spec.display_name, spec.hook_event
+            spec.display_name, event_name
         ))
     })
 }
 
 fn hook_array<'a>(root: &'a Value, spec: &Spec) -> Option<&'a Vec<Value>> {
-    root.get("hooks")?.get(spec.hook_event)?.as_array()
+    root.get("hooks")?
+        .get(spec.hook.as_ref()?.event)?
+        .as_array()
 }
 
 fn find_hook<'a>(root: &'a Value, spec: &Spec) -> Option<&'a Value> {

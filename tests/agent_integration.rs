@@ -178,6 +178,174 @@ fn codex_install_status_and_uninstall_work_in_an_isolated_home() {
     assert!(!config_toml.contains("mcp_servers.torii"));
 }
 
+/// Cada agente sem hook tem sua própria variável de home, arquivo e chave de servidores.
+fn mcp_only_agents() -> [(&'static str, &'static str, &'static str, &'static str); 4] {
+    [
+        ("opencode", "TORII_OPENCODE_HOME", "opencode.json", "mcp"),
+        ("copilot", "TORII_COPILOT_HOME", "mcp.json", "servers"),
+        (
+            "copilot-cli",
+            "TORII_COPILOT_CLI_HOME",
+            "mcp-config.json",
+            "mcpServers",
+        ),
+        ("pi", "TORII_PI_HOME", "mcp.json", "mcpServers"),
+    ]
+}
+
+#[test]
+fn mcp_only_agents_install_in_their_native_shape_and_preserve_config() {
+    for (agent, home_var, file, key) in mcp_only_agents() {
+        let config = TempDir::new().unwrap();
+        let home = TempDir::new().unwrap();
+        let config_path = home.path().join(file);
+        std::fs::write(&config_path, r#"{"theme":"dark"}"#).unwrap();
+
+        let mut install = torii();
+        install
+            .env("TORII_CONFIG_DIR", config.path())
+            .env(home_var, home.path())
+            .args(["agent", "install", agent]);
+        // pi exige confirmação explícita porque depende de uma extensão externa.
+        if agent == "pi" {
+            install.arg("--yes");
+        }
+        let install = install.output().unwrap();
+        assert!(
+            install.status.success(),
+            "{agent}: {}",
+            String::from_utf8_lossy(&install.stderr)
+        );
+
+        let written: Value =
+            serde_json::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
+        let entry = &written[key]["torii"];
+        assert!(
+            entry.is_object(),
+            "{agent} should declare torii under {key}"
+        );
+        assert_eq!(written["theme"], "dark", "{agent} must preserve other keys");
+        match agent {
+            "opencode" => {
+                assert_eq!(entry["type"], "local", "{agent}");
+                assert!(entry["command"].is_array(), "{agent} takes a command array");
+                assert!(
+                    entry["environment"]["TORII_CONFIG_DIR"].is_string(),
+                    "{agent}"
+                );
+            }
+            "copilot-cli" => {
+                assert_eq!(entry["type"], "local", "{agent}");
+                assert_eq!(entry["tools"][0], "*", "{agent}");
+                assert!(entry["env"]["TORII_CONFIG_DIR"].is_string(), "{agent}");
+            }
+            "copilot" => {
+                assert_eq!(entry["type"], "stdio", "{agent}");
+                assert!(entry["env"]["TORII_CONFIG_DIR"].is_string(), "{agent}");
+            }
+            _ => assert!(entry["env"]["TORII_CONFIG_DIR"].is_string(), "{agent}"),
+        }
+
+        let status = torii()
+            .env("TORII_CONFIG_DIR", config.path())
+            .env(home_var, home.path())
+            .args(["agent", "status", agent])
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&status.stdout);
+        assert!(
+            stdout.contains("mcp\tinstalled (managed by Torii)"),
+            "{agent}: {stdout}"
+        );
+        assert!(stdout.contains("hook\tnot supported"), "{agent}: {stdout}");
+
+        let uninstall = torii()
+            .env("TORII_CONFIG_DIR", config.path())
+            .env(home_var, home.path())
+            .args(["agent", "uninstall", agent])
+            .output()
+            .unwrap();
+        assert!(
+            uninstall.status.success(),
+            "{agent}: {}",
+            String::from_utf8_lossy(&uninstall.stderr)
+        );
+        let written: Value =
+            serde_json::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
+        assert!(written.get(key).is_none(), "{agent} should remove {key}");
+        assert_eq!(written["theme"], "dark", "{agent}");
+    }
+}
+
+#[test]
+fn mcp_only_agents_reject_the_hook_and_pi_requires_confirmation() {
+    for (agent, home_var, _, _) in mcp_only_agents() {
+        let config = TempDir::new().unwrap();
+        let home = TempDir::new().unwrap();
+        let hook = torii()
+            .env("TORII_CONFIG_DIR", config.path())
+            .env(home_var, home.path())
+            .args(["agent", "install", agent, "--hook"])
+            .output()
+            .unwrap();
+        assert!(!hook.status.success(), "{agent} must reject --hook");
+        let stderr = String::from_utf8_lossy(&hook.stderr);
+        assert!(
+            stderr.contains("does not offer a pre-execution hook"),
+            "{agent}: {stderr}"
+        );
+        // Recusar --hook não pode deixar configuração pela metade.
+        assert!(
+            std::fs::read_dir(home.path())
+                .map(|mut entries| entries.next().is_none())
+                .unwrap_or(true),
+            "{agent} wrote configuration despite failing"
+        );
+    }
+
+    let config = TempDir::new().unwrap();
+    let home = TempDir::new().unwrap();
+    let unconfirmed = torii()
+        .env("TORII_CONFIG_DIR", config.path())
+        .env("TORII_PI_HOME", home.path())
+        .args(["agent", "install", "pi"])
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert!(
+        !unconfirmed.status.success(),
+        "pi must ask before installing"
+    );
+    let stderr = String::from_utf8_lossy(&unconfirmed.stderr);
+    assert!(stderr.contains("does not support MCP natively"), "{stderr}");
+    assert!(stderr.contains("do not continue"), "{stderr}");
+    assert!(
+        !home.path().join("mcp.json").exists(),
+        "pi wrote config without confirmation"
+    );
+}
+
+#[test]
+fn opencode_refuses_to_edit_a_jsonc_configuration() {
+    let config = TempDir::new().unwrap();
+    let home = TempDir::new().unwrap();
+    std::fs::write(
+        home.path().join("opencode.jsonc"),
+        "{\n  // comentário do humano\n  \"theme\": \"dark\"\n}\n",
+    )
+    .unwrap();
+    let install = torii()
+        .env("TORII_CONFIG_DIR", config.path())
+        .env("TORII_OPENCODE_HOME", home.path())
+        .args(["agent", "install", "opencode"])
+        .output()
+        .unwrap();
+    assert!(!install.status.success());
+    let stderr = String::from_utf8_lossy(&install.stderr);
+    assert!(stderr.contains("opencode.jsonc"), "{stderr}");
+    assert!(!home.path().join("opencode.json").exists());
+}
+
 #[test]
 fn portable_agent_installers_preserve_config_and_can_be_uninstalled() {
     for agent in ["claude", "gemini", "cursor"] {

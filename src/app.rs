@@ -55,6 +55,10 @@ async fn run_async(args: Vec<String>) -> Result<i32> {
             println!("claude\tMCP and optional PreToolUse hook");
             println!("gemini\tMCP and optional BeforeTool hook");
             println!("cursor\tMCP and optional beforeShellExecution hook");
+            println!("opencode\tMCP only; opencode has no pre-execution hook");
+            println!("copilot\tMCP only; GitHub Copilot in VS Code has no pre-execution hook");
+            println!("copilot-cli\tMCP only; GitHub Copilot CLI has no pre-execution hook");
+            println!("pi\tMCP only, and pi needs an MCP extension to read it");
             Ok(0)
         }
         [command, subcommand, agent]
@@ -93,35 +97,21 @@ async fn run_async(args: Vec<String>) -> Result<i32> {
             crate::agents::codex::uninstall(&paths, true)?;
             Ok(0)
         }
-        [command, subcommand, agent]
-            if command == "agent"
-                && subcommand == "install"
-                && matches!(agent.as_str(), "claude" | "gemini" | "cursor") =>
+        [command, subcommand, agent, flags @ ..]
+            if command == "agent" && subcommand == "install" && is_portable_agent(agent) =>
         {
-            crate::agents::portable::install(&paths, agent, false)?;
-            Ok(0)
-        }
-        [command, subcommand, agent, hook]
-            if command == "agent"
-                && subcommand == "install"
-                && matches!(agent.as_str(), "claude" | "gemini" | "cursor")
-                && hook == "--hook" =>
-        {
-            crate::agents::portable::install(&paths, agent, true)?;
+            let (with_hook, assume_yes) = install_flags(flags)?;
+            crate::agents::portable::install(&paths, agent, with_hook, assume_yes)?;
             Ok(0)
         }
         [command, subcommand, agent]
-            if command == "agent"
-                && subcommand == "status"
-                && matches!(agent.as_str(), "claude" | "gemini" | "cursor") =>
+            if command == "agent" && subcommand == "status" && is_portable_agent(agent) =>
         {
             crate::agents::portable::print_status(&paths, agent)?;
             Ok(0)
         }
         [command, subcommand, agent]
-            if command == "agent"
-                && subcommand == "uninstall"
-                && matches!(agent.as_str(), "claude" | "gemini" | "cursor") =>
+            if command == "agent" && subcommand == "uninstall" && is_portable_agent(agent) =>
         {
             crate::agents::portable::uninstall(&paths, agent, false)?;
             Ok(0)
@@ -129,7 +119,7 @@ async fn run_async(args: Vec<String>) -> Result<i32> {
         [command, subcommand, agent, hook]
             if command == "agent"
                 && subcommand == "uninstall"
-                && matches!(agent.as_str(), "claude" | "gemini" | "cursor")
+                && is_portable_agent(agent)
                 && hook == "--hook" =>
         {
             crate::agents::portable::uninstall(&paths, agent, true)?;
@@ -291,6 +281,30 @@ fn version_text() -> String {
     format!("torii {}", env!("CARGO_PKG_VERSION"))
 }
 
+fn is_portable_agent(agent: &str) -> bool {
+    matches!(
+        agent,
+        "claude" | "gemini" | "cursor" | "opencode" | "copilot" | "copilot-cli" | "pi"
+    )
+}
+
+fn install_flags(flags: &[String]) -> Result<(bool, bool)> {
+    let mut with_hook = false;
+    let mut assume_yes = false;
+    for flag in flags {
+        match flag.as_str() {
+            "--hook" if !with_hook => with_hook = true,
+            "--yes" if !assume_yes => assume_yes = true,
+            other => {
+                return Err(Error::InvalidArguments(format!(
+                    "unexpected argument {other:?}; expected --hook or --yes at most once"
+                )));
+            }
+        }
+    }
+    Ok((with_hook, assume_yes))
+}
+
 fn help_request(args: &[String]) -> Option<&'static str> {
     if args.first().is_some_and(|arg| arg == "help") {
         return help_text(&args[1..]);
@@ -328,11 +342,11 @@ fn help_text(command: &[String]) -> Option<&'static str> {
         ["target", "list"] => Some("Usage:\n  torii target list <provider-tool>\n\nLists aliases and their fixed bindings in the human control plane."),
         ["target", "show"] => Some("Usage:\n  torii target show <provider-tool> <name>\n\nPrints the target configuration."),
         ["target", "remove"] => Some("Usage:\n  torii target remove <provider-tool> <name> --force\n\nRevokes the target authorization and removes the target and its isolated state. `--force` is required."),
-        ["agent"] => Some("Usage:\n  torii agent <command>\n\nCommands:\n  list\n  install <codex|claude|gemini|cursor> [--hook]\n  status <codex|claude|gemini|cursor>\n  uninstall <codex|claude|gemini|cursor> [--hook]\n\nThe optional hook redirects direct provider CLI attempts to the corresponding MCP tool."),
-        ["agent", "list"] => Some("Usage:\n  torii agent list\n\nLists the implemented agent adapters."),
-        ["agent", "install"] => Some("Usage:\n  torii agent install <codex|claude|gemini|cursor> [--hook]\n\nRegisters the Torii MCP server in the selected agent configuration. `--hook` also installs the direct-provider CLI guard."),
-        ["agent", "status"] => Some("Usage:\n  torii agent status <codex|claude|gemini|cursor>\n\nShows whether the MCP integration and hook are installed and managed by this Torii configuration."),
-        ["agent", "uninstall"] => Some("Usage:\n  torii agent uninstall <codex|claude|gemini|cursor> [--hook]\n\nRemoves the managed integration, or only its hook with `--hook`."),
+        ["agent"] => Some("Usage:\n  torii agent <command>\n\nCommands:\n  list\n  install <agent> [--hook] [--yes]\n  status <agent>\n  uninstall <agent> [--hook]\n\n<agent> is codex, claude, gemini, cursor, opencode, copilot, copilot-cli, or pi. Run `torii agent list` for what each adapter supports. The optional hook redirects direct provider CLI attempts to the corresponding MCP tool and exists only for agents that offer a pre-execution hook."),
+        ["agent", "list"] => Some("Usage:\n  torii agent list\n\nLists the implemented agent adapters and whether each one supports the hook."),
+        ["agent", "install"] => Some("Usage:\n  torii agent install <agent> [--hook] [--yes]\n\nRegisters the Torii MCP server in the selected agent configuration. `--hook` also installs the direct-provider CLI guard and is rejected for agents without a pre-execution hook. `--yes` confirms an adapter that needs acknowledgement, such as pi, whose MCP support depends on an extension installed by the human."),
+        ["agent", "status"] => Some("Usage:\n  torii agent status <agent>\n\nShows whether the MCP integration and hook are installed and managed by this Torii configuration. Agents without a pre-execution hook report the hook as unsupported."),
+        ["agent", "uninstall"] => Some("Usage:\n  torii agent uninstall <agent> [--hook]\n\nRemoves the managed integration, or only its hook with `--hook`."),
         ["init"] => Some("Usage:\n  torii init\n\nCreates the configuration root and default settings without installing providers."),
         ["config-dir"] => Some("Usage:\n  torii config-dir\n\nPrints the active Torii configuration directory."),
         _ => None,
