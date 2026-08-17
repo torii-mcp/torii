@@ -12,6 +12,16 @@ Torii percorre `providers/` e carrega diretórios com `provider.yaml`. Nomes ló
 
 Um pacote é um conjunto declarativo com provider, rules vazio, ambiente inicial e setups read-only opcionais. Pacotes oficiais vivem no catálogo separado [`torii-mcp/torii-canon-providers`](https://github.com/torii-mcp/torii-canon-providers); `examples/providers/` contém fixtures equivalentes para desenvolvimento.
 
+O catálogo publica hoje:
+
+| Pacote | Tool MCP | Autenticação | Target-aware |
+|---|---|---|---|
+| `aws` | `aws` | `environment`, coletada pelo Torii | não |
+| `aws-profile` | `aws_profile` | `inherited` por profile humano, com conferência de conta | sim |
+| `az` | `az` | `inherited` do `az login` | não |
+| `kubectl` | `kubectl` | delegada ao provider de identidade do target | sim |
+| `snow` | `snow` | `inherited` | não |
+
 `provider install` materializa o pacote atomicamente. `provider setup <provider> <perfil>` é uma operação posterior e explícita sobre a política vazia. O agente não acessa nenhuma dessas capacidades.
 
 ## Provider simples

@@ -1,6 +1,6 @@
 version: "1"
 name: kubectl
-package_version: "0.1.0"
+package_version: "0.1.1"
 description: kubectl target-aware com setups de política por cluster.
 provider: provider.yaml
 rules: rules.yaml
