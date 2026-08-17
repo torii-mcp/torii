@@ -4,6 +4,30 @@ Todas as mudanças relevantes deste projeto são registradas aqui. O formato seg
 [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e o versionamento é
 [semântico](https://semver.org/lang/pt-BR/).
 
+## Não lançado
+
+### Adicionado
+
+- adapters de agente para opencode, GitHub Copilot no VS Code, GitHub Copilot CLI e pi, cada
+  um escrito no formato nativo do cliente (`mcp` com comando em vetor no opencode, `servers`
+  no Copilot do VS Code, `mcpServers` com `tools` na CLI do Copilot);
+- `--yes` em `agent install` para confirmar o adapter do pi, cujo suporte a MCP depende de uma
+  extensão instalada pelo humano; sem terminal interativo a instalação é recusada;
+- guias de provider para Azure (`az`) e Snowflake (`snow`).
+
+### Alterado
+
+- `agent install --hook` é recusado antes de qualquer escrita em clientes sem hook de
+  pré-execução, e `agent status` informa `hook not supported` para eles;
+- `agent install opencode` recusa editar uma configuração em `opencode.jsonc` em vez de
+  reescrever o arquivo e descartar comentários.
+
+### Corrigido
+
+- larguras de traço da janela anotadas como `f32`: o literal ambíguo caía para `f64` e o Rust
+  estável atual avisa sobre essa inferência, quebrando a verificação com `-D warnings`;
+- checksum do pacote Windows escrito com LF, para `sha256sum -c` funcionar no destino.
+
 ## [0.2.0] — 2026-08-17
 
 ### Adicionado

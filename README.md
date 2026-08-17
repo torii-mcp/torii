@@ -92,6 +92,7 @@ Para registrar o Torii no Codex, Claude Code, Gemini CLI ou Cursor e habilitar o
 
 ```powershell
 torii agent install <codex|claude|gemini|cursor> --hook
+torii agent install <opencode|copilot|copilot-cli|pi>
 torii agent status codex
 ```
 

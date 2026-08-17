@@ -32,7 +32,7 @@ torii provider install --help
 | `torii target clear <tool>` | revoga todos os leases da tool, sem alterar o estado operacional |
 | `torii target remove <tool> <name> --force` | revoga o lease e remove o target e seu estado isolado |
 | `torii agent list` | lista adapters de agentes implementados |
-| `torii agent install <agent> [--hook]` | registra o MCP em Codex, Claude, Gemini ou Cursor e, opcionalmente, instala o guard |
+| `torii agent install <agent> [--hook] [--yes]` | registra o MCP no cliente e, quando ele oferecer hook, instala o guard |
 | `torii agent status <agent>` | mostra o estado MCP/hook e sua propriedade |
 | `torii agent uninstall <agent> [--hook]` | remove toda a integração ou somente o hook |
 
@@ -48,4 +48,4 @@ Todo target-aware nasce inativo, embora continue anunciado no schema MCP. `targe
 
 Não existem `torii aws s3 ls`, `torii kubectl get pods`, instalação via MCP ou atualização automática. Durante o servidor MCP, stdout é reservado; subcomandos humanos usam stdout para dados e stderr para progresso. `reauth` é exclusivamente humano; uma chamada MCP já autorizada abre autenticação humana automaticamente quando a sessão gerenciada não está disponível.
 
-`<agent>` aceita `codex`, `claude`, `gemini` ou `cursor`. `agent install` é control plane humano: escreve na configuração global do cliente, preserva entradas existentes e recusa substituir um servidor MCP `torii` conflitante. O estado necessário para remover somente conteúdo gerenciado fica em `<TORII_CONFIG_DIR>/agents/<agent>.json`.
+`<agent>` aceita `codex`, `claude`, `gemini`, `cursor`, `opencode`, `copilot`, `copilot-cli` ou `pi`; `torii agent list` mostra o que cada um suporta. `opencode`, `copilot`, `copilot-cli` e `pi` não oferecem hook, então `--hook` é recusado antes de qualquer escrita e o status informa `hook not supported`. O pi não fala MCP nativamente: sua configuração só é lida por uma extensão MCP instalada pelo humano, então a instalação avisa e exige confirmação interativa ou `--yes`. `agent install` é control plane humano: escreve na configuração global do cliente, preserva entradas existentes e recusa substituir um servidor MCP `torii` conflitante. O estado necessário para remover somente conteúdo gerenciado fica em `<TORII_CONFIG_DIR>/agents/<agent>.json`.

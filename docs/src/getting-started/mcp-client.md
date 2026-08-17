@@ -29,6 +29,8 @@ Em Unix, use o caminho correspondente:
 }
 ```
 
+Nem todo cliente usa `mcpServers`: o opencode declara servidores em `mcp`, com o comando em vetor e o ambiente em `environment`, e o Copilot no VS Code usa `servers`. Em vez de acertar isso à mão, use `torii agent install <agent>`, que escreve o formato de cada cliente — veja [Integrar agentes](../guides/agents.md).
+
 ## Descoberta de tools
 
 No startup, Torii carrega os subdiretórios de `providers/`. Cada `provider.yaml` válido produz uma tool. Alterações em providers exigem reiniciar o servidor para reconstruir o registry.

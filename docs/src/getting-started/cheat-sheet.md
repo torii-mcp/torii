@@ -37,7 +37,9 @@ torii config-dir         # mostra a raiz efetiva
 
 ```powershell
 torii agent list                       # adapters implementados
-torii agent install claude --hook      # codex | claude | gemini | cursor
+torii agent install claude --hook      # com hook: codex | claude | gemini | cursor
+torii agent install opencode           # sem hook: opencode | copilot | copilot-cli
+torii agent install pi --yes           # pi depende de uma extensão MCP instalada por você
 torii agent status claude
 torii agent uninstall claude --hook    # remove tudo; sem --hook remove só o MCP
 ```
