@@ -895,7 +895,7 @@ impl AccessApp {
     fn render_prefix_editor(&mut self, ui: &mut egui::Ui) {
         let fixed_frame = egui::Frame::group(ui.style())
             .fill(FIXED_GROUP_BG)
-            .stroke(egui::Stroke::new(1.0, FIXED_STROKE))
+            .stroke(egui::Stroke::new(1.0_f32, FIXED_STROKE))
             .inner_margin(egui::Margin::same(8.0));
         fixed_frame.show(ui, |ui| {
             ui.set_min_width(ui.available_width());
@@ -911,7 +911,7 @@ impl AccessApp {
                         ui,
                         index,
                         FIXED_PILL_BG,
-                        egui::Stroke::new(1.0, FIXED_STROKE),
+                        egui::Stroke::new(1.0_f32, FIXED_STROKE),
                         FIXED_TEXT,
                         true,
                     );
@@ -922,7 +922,7 @@ impl AccessApp {
         ui.add_space(6.0);
         let free_frame = egui::Frame::group(ui.style())
             .fill(FREE_GROUP_BG)
-            .stroke(egui::Stroke::new(1.0, FREE_STROKE))
+            .stroke(egui::Stroke::new(1.0_f32, FREE_STROKE))
             .inner_margin(egui::Margin::same(8.0));
         free_frame.show(ui, |ui| {
             ui.set_min_width(ui.available_width());
@@ -941,7 +941,7 @@ impl AccessApp {
                         ui,
                         index,
                         FREE_PILL_BG,
-                        egui::Stroke::new(1.0, FREE_STROKE),
+                        egui::Stroke::new(1.0_f32, FREE_STROKE),
                         FREE_TEXT,
                         true,
                     );
@@ -953,7 +953,7 @@ impl AccessApp {
                             .color(BOUNDARY_ACCENT),
                     )
                     .fill(FREE_GROUP_BG)
-                    .stroke(egui::Stroke::new(1.5, BOUNDARY_ACCENT))
+                    .stroke(egui::Stroke::new(1.5_f32, BOUNDARY_ACCENT))
                     .sense(egui::Sense::hover()),
                 )
                 .on_hover_text(
@@ -1346,7 +1346,7 @@ impl eframe::App for TargetAccessApp {
                     let content_width = (ui.available_width() - 20.0).max(0.0);
                     egui::Frame::none()
                         .fill(TARGET_WARNING_BG)
-                        .stroke(egui::Stroke::new(1.0, TARGET_WARNING_STROKE))
+                        .stroke(egui::Stroke::new(1.0_f32, TARGET_WARNING_STROKE))
                         .inner_margin(egui::Margin::same(10.0))
                         .show(ui, |ui| {
                             ui.set_min_width(content_width);
