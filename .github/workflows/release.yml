@@ -67,7 +67,11 @@ jobs:
           Copy-Item README.md, LICENSE "dist/$package/"
           Compress-Archive -Path "dist/$package" -DestinationPath "dist/$package.zip"
           $hash = (Get-FileHash "dist/$package.zip" -Algorithm SHA256).Hash.ToLowerInvariant()
-          "$hash  $package.zip" | Set-Content "dist/$package.zip.sha256" -Encoding ascii
+          # Escrito com LF: um .sha256 com CRLF faz `sha256sum -c` falhar no destino.
+          [System.IO.File]::WriteAllText(
+            (Join-Path (Resolve-Path dist) "$package.zip.sha256"),
+            "$hash  $package.zip`n"
+          )
 
       - name: Upload packaged binary
         uses: actions/upload-artifact@v6
