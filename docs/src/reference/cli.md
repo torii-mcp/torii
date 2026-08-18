@@ -17,6 +17,7 @@ torii provider install --help
 | `torii --version` ou `torii -V` | imprime a versão do binário |
 | `torii init` | cria raiz e settings, sem instalar providers |
 | `torii config-dir` | imprime o diretório de configuração |
+| `torii self update [--check]` | atualiza o próprio binário a partir da última release |
 | `torii provider list` | lista providers locais, versão e origem |
 | `torii provider search [query]` | pesquisa o catálogo configurado |
 | `torii provider install <source>` | instala nome, diretório, archive ou URL HTTPS |
@@ -39,6 +40,8 @@ torii provider install --help
 | `torii agent uninstall <agent> [--hook]` | remove toda a integração ou somente o hook |
 
 Install recusa destino existente. Setup recusa rules não vazio. Update requer lock de pacote e preserva rules, `.env`, grants, targets, cache e autenticação. Alterações no conjunto/configuração de providers exigem reiniciar o MCP.
+
+`self update` é humano e explícito: nada no Torii se atualiza sozinho, e o MCP não expõe essa ação. Ele resolve a última release da plataforma pelo redirecionamento de `/releases/latest`, confere o SHA-256 publicado e substitui o binário em execução; providers, políticas, targets, grants e credenciais ficam intactos. `--check` apenas informa. Um cliente MCP já em execução continua com o binário anterior até ser reiniciado.
 
 `policy edit` abre uma cópia da política no `$VISUAL` ou `$EDITOR` — `notepad` no Windows e `vi` nos demais sistemas quando nenhum está definido. Um editor que devolve o controle imediatamente precisa ser instruído a esperar, como `code --wait` ou `subl -w`. Ao fechar, o rascunho é parseado e cada regra é compilada; só depois disso ele substitui o arquivo vivo de forma atômica. YAML malformado, regex inválido ou política vazia não chegam ao arquivo ativo, e o rascunho recusado é preservado num caminho informado no erro. Em terminal interativo, o Torii oferece reabrir o editor. Sem alterações, nada é gravado. Como `rules.yaml` é relido em cada chamada, não é preciso reiniciar o MCP.
 

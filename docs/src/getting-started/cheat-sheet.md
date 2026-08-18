@@ -22,9 +22,12 @@ Detalhes em [Modelo mental](../concepts/mental-model.md) e
 ## Instalar e apontar a raiz
 
 ```powershell
+# Linux:   curl -fsSL https://raw.githubusercontent.com/torii-mcp/torii/main/install.sh | sh
+# Windows: irm https://raw.githubusercontent.com/torii-mcp/torii/main/install.ps1 | iex
 torii --version          # confirma o binário
 torii init               # cria a raiz e settings.yaml
 torii config-dir         # mostra a raiz efetiva
+torii self update        # atualiza o binário; --check só informa
 ```
 
 | Variável | Efeito |

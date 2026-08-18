@@ -20,6 +20,11 @@ Todas as mudanças relevantes deste projeto são registradas aqui. O formato seg
   no `$VISUAL`/`$EDITOR`, parseia e compila cada regra antes de substituir o arquivo vivo de
   forma atômica, preserva o rascunho recusado e avisa sobre accepts abaixo de
   `minimum_accept_tokens`; `--create` inicia a política de um target;
+- `install.sh` e `install.ps1`: instaladores por `curl | sh` e `irm | iex` que resolvem a última
+  release, conferem o SHA-256 publicado antes de extrair, instalam num diretório do usuário sem
+  exigir administrador e tratam o PATH — no Linux só com `--add-to-path`, no Windows por padrão;
+- `torii self update [--check]`: baixa a release da plataforma, confere o checksum e substitui o
+  binário em execução, preservando configuração, políticas, targets, grants e credenciais;
 - guias de provider para Azure (`az`) e Snowflake (`snow`).
 
 ### Alterado

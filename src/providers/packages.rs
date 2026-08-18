@@ -717,7 +717,7 @@ fn verify_sha256(bytes: &[u8], expected: Option<&str>) -> Result<()> {
     Ok(())
 }
 
-fn extract_archive(bytes: &[u8], hint: &str, destination: &Path) -> Result<()> {
+pub(crate) fn extract_archive(bytes: &[u8], hint: &str, destination: &Path) -> Result<()> {
     if bytes.starts_with(b"PK\x03\x04") || hint.to_ascii_lowercase().ends_with(".zip") {
         return extract_zip(bytes, destination);
     }
@@ -872,7 +872,7 @@ fn locate_package_root(extracted: &Path) -> Result<PathBuf> {
     }
 }
 
-async fn download(url: &str) -> Result<Vec<u8>> {
+pub(crate) async fn download(url: &str) -> Result<Vec<u8>> {
     let parsed = reqwest::Url::parse(url)
         .map_err(|_| Error::Package("invalid provider package URL".into()))?;
     if parsed.scheme() != "https" {

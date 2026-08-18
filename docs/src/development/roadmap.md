@@ -18,6 +18,8 @@ Esta página distingue deliberadamente o que existe do que ainda precisa de prov
 - CLI humana de targets e isolamento de grants/cache/auth por alias;
 - leases humanos por provider para aliases target-aware, com expiração, digest de binding, CAS, lock e escrita atômica;
 - pacotes declarativos locais/remotos, catálogo pesquisável e update que preserva estado;
+- instaladores por script para Linux e Windows, com verificação do checksum publicado;
+- `self update` humano, que confere o checksum antes de trocar o binário;
 
 ## Reconhecido, não implementado
 
@@ -32,7 +34,8 @@ O schema aceita esses nomes para manter a direção arquitetural explícita, mas
 - SDKs de nuvem substituindo os CLIs;
 - parser completo de kubectl;
 - assinatura criptográfica do catálogo/pacotes e remoção automatizada;
-- distribuição OCI, WASM ou atualização automática;
+- distribuição OCI, WASM ou atualização automática sem pedido humano;
+- assinatura dos binários publicados: o checksum detecta corrupção, não substitui assinatura;
 - OAuth remoto;
 - daemon multiusuário;
 - tool MCP de reauth ou kill;

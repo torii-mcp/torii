@@ -37,7 +37,17 @@ O humano continua usando `aws`, `kubectl`, `az` ou `gcloud` diretamente. O agent
 
 ## Começando
 
-Baixe o pacote da sua plataforma nos [releases do Torii](https://github.com/torii-mcp/torii/releases). Cada release publica:
+Instalação rápida, com verificação do SHA-256 publicado e sem exigir administrador:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/torii-mcp/torii/main/install.sh | sh
+```
+
+```powershell
+irm https://raw.githubusercontent.com/torii-mcp/torii/main/install.ps1 | iex
+```
+
+Depois de instalado, `torii self update` troca o binário pela última release. Ou baixe o pacote da sua plataforma nos [releases do Torii](https://github.com/torii-mcp/torii/releases). Cada release publica:
 
 - `torii-vX.Y.Z-windows-x86_64.zip`;
 - `torii-vX.Y.Z-linux-x86_64.tar.gz`;
