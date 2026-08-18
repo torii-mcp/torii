@@ -19,16 +19,38 @@ agente → MCP stdio → Torii → lease do target → Jasper → sessão isolad
 Detalhes em [Modelo mental](../concepts/mental-model.md) e
 [Modelo de segurança](../concepts/security-model.md).
 
-## Instalar e apontar a raiz
+## Instalar
+
+Linux x86_64:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/torii-mcp/torii/main/install.sh | sh
+# opções pelo pipe: sh -s -- --add-to-path --dir ~/bin --version v0.2.0
+```
+
+Windows x86_64:
 
 ```powershell
-# Linux:   curl -fsSL https://raw.githubusercontent.com/torii-mcp/torii/main/install.sh | sh
-# Windows: irm https://raw.githubusercontent.com/torii-mcp/torii/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/torii-mcp/torii/main/install.ps1 | iex
+# opções: .\install.ps1 -InstallDir D:\tools\torii -NoPathUpdate -Version v0.2.0
+```
+
+Os dois conferem o SHA-256 publicado antes de extrair e instalam sem administrador. No
+Windows o destino entra no PATH do usuário; no Linux, só com `--add-to-path`. Reabra o
+terminal depois.
+
+## Apontar a raiz e trocar de versão
+
+```powershell
 torii --version          # confirma o binário
 torii init               # cria a raiz e settings.yaml
 torii config-dir         # mostra a raiz efetiva
-torii self update        # atualiza o binário; --check só informa
+torii self upgrade       # troca o binário pela última release; --check só informa
 ```
+
+**Upgrade, não update:** trocar a versão de algo instalado é sempre `upgrade` — do binário
+(`self upgrade`) ou de um pacote (`provider upgrade`). Não existe `update` no Torii, porque
+não há índice local para sincronizar.
 
 | Variável | Efeito |
 |---|---|
@@ -61,7 +83,7 @@ torii provider install aws         # nome do catálogo
 torii provider install ./examples/providers/az   # diretório, .zip, .tar.gz ou URL HTTPS
 torii provider setup aws readonly  # aplica política de exemplo read-only
 torii provider list                # tool, nome, executável, versão e origem
-torii provider update aws          # só arquivos do pacote; nunca rules, .env ou estado
+torii provider upgrade aws         # só arquivos do pacote; nunca rules, .env ou estado
 ```
 
 Todo pacote instala `rules.yaml` **vazio**: nada atravessa até você escrever a política.

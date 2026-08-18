@@ -47,7 +47,7 @@ curl -fsSL https://raw.githubusercontent.com/torii-mcp/torii/main/install.sh | s
 irm https://raw.githubusercontent.com/torii-mcp/torii/main/install.ps1 | iex
 ```
 
-Depois de instalado, `torii self update` troca o binário pela última release. Ou baixe o pacote da sua plataforma nos [releases do Torii](https://github.com/torii-mcp/torii/releases). Cada release publica:
+Depois de instalado, `torii self upgrade` troca o binário pela última release. Ou baixe o pacote da sua plataforma nos [releases do Torii](https://github.com/torii-mcp/torii/releases). Cada release publica:
 
 - `torii-vX.Y.Z-windows-x86_64.zip`;
 - `torii-vX.Y.Z-linux-x86_64.tar.gz`;
@@ -77,7 +77,7 @@ Um nome simples é resolvido no catálogo oficial [`torii-mcp/torii-canon-provid
 
 Providers não possuem build específico por sistema operacional. São pacotes declarativos ZIP contendo manifest, configuração, regras vazias e setups opcionais. O catálogo associa cada nome à URL HTTPS do asset de uma release e ao SHA-256 esperado; o Torii baixa o asset, verifica o hash e só então valida e instala seu conteúdo.
 
-Todo pacote instala `rules.yaml` vazio. Somente `provider setup <provider> <setup>` aplica uma política de exemplo read-only, recusando sobrescrever uma política não vazia. `provider update` nunca escreve em `rules.yaml`, `.env`, grants, targets, cache ou autenticação.
+Todo pacote instala `rules.yaml` vazio. Somente `provider setup <provider> <setup>` aplica uma política de exemplo read-only, recusando sobrescrever uma política não vazia. `provider upgrade` nunca escreve em `rules.yaml`, `.env`, grants, targets, cache ou autenticação.
 
 Revise os arquivos criados em `$TORII_CONFIG_DIR/providers`. Para renovar AWS:
 

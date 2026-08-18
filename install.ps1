@@ -144,7 +144,7 @@ try {
 
     $installed = Get-InstalledVersion $destination
     if ($previous -and $previous -ne $installed) {
-        Write-Step "Updated $previous to $installed at $destination"
+        Write-Step "Upgraded $previous to $installed at $destination"
     } else {
         Write-Step "Installed $installed at $destination"
     }

@@ -55,7 +55,7 @@ main() {
 
     installed="$("${install_dir}/torii" --version 2>/dev/null || echo unknown)"
     if [ -n "$previous" ] && [ "$previous" != "$installed" ]; then
-        say "Updated ${previous} to ${installed} at ${install_dir}/torii"
+        say "Upgraded ${previous} to ${installed} at ${install_dir}/torii"
     else
         say "Installed ${installed} at ${install_dir}/torii"
     fi

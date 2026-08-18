@@ -12,7 +12,7 @@ mdbook build docs
 
 ## Testes existentes
 
-Testes unitários cobrem parsing de ambiente, matching, grants, pacotes em diretório/archive, setup, update preservando estado e truncamento UTF-8. `tests/security_flow.rs` prova que deny explícito e default deny headless encerram antes de ambiente, autenticação ou executável. `tests/mcp_readonly_integration.rs` negocia MCP com um processo Torii real, executa uma operação local de leitura permitida e confirma que outra leitura explicitamente negada não inicia o provider.
+Testes unitários cobrem parsing de ambiente, matching, grants, pacotes em diretório/archive, setup, upgrade preservando estado e truncamento UTF-8. `tests/security_flow.rs` prova que deny explícito e default deny headless encerram antes de ambiente, autenticação ou executável. `tests/mcp_readonly_integration.rs` negocia MCP com um processo Torii real, executa uma operação local de leitura permitida e confirma que outra leitura explicitamente negada não inicia o provider.
 
 ## Regressões prioritárias
 
@@ -38,7 +38,7 @@ Toda mudança no fluxo deve preservar testes para:
 - múltiplos aliases ativos permanecendo no schema; na janela, o alerta ocupa a largura disponível junto às ações e **Adicionar** só conclui depois de 1 segundo de pressão contínua, reiniciando ao soltar; o clique que traz uma janela sem foco para frente já inicia a contagem;
 - limite combinado de saída;
 - tools/list contendo uma tool por provider e nenhuma tool de controle.
-- pacote recusando rules base não vazio, setup recusando overwrite e update preservando rules/estado.
+- pacote recusando rules base não vazio, setup recusando overwrite e upgrade preservando rules/estado.
 
 ## Testar documentação
 

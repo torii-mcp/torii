@@ -34,10 +34,10 @@ Pacotes podem oferecer vários setups read-only. Setup é o único comando que e
 ## Atualizar
 
 ```powershell
-torii provider update aws
+torii provider upgrade aws
 ```
 
-Update usa a origem gravada no lock. Ele substitui `provider.yaml` e metadados/setups do pacote. Rules ativo, `.env`, grants, targets, cache e autenticação não são abertos para escrita.
+Upgrade usa a origem gravada no lock. Ele substitui `provider.yaml` e metadados/setups do pacote. Rules ativo, `.env`, grants, targets, cache e autenticação não são abertos para escrita.
 
 ## Inicializar e descobrir paths
 
@@ -75,4 +75,4 @@ O primeiro comando cria um binding Kubernetes; o segundo cria um binding AWS de 
 
 `target activate` libera temporariamente um alias. Sem `--add`, ele substitui todos os aliases ativos daquela tool; com `--add`, preserva os existentes. A duração aceita 1 a 1.440 minutos e usa `default_target_minutes` (15) quando `--for` não é informado. Ao manter mais de um ativo, aceite deliberadamente que o agente poderá escolher qualquer alias ativo em uma operação permitida. `target status` mostra os leases e expirações. `target clear` revoga somente leases: não remove target, rules, grants, `.env`, cache ou credenciais e não encerra processos já iniciados.
 
-Reinicie o servidor MCP após install, update ou mudança no conjunto de targets. A criação/remoção muda o enum do schema; ativar, limpar ou aguardar a expiração não muda o enum. `rules.yaml` e o estado de lease são relidos durante cada chamada.
+Reinicie o servidor MCP após install, upgrade ou mudança no conjunto de targets. A criação/remoção muda o enum do schema; ativar, limpar ou aguardar a expiração não muda o enum. `rules.yaml` e o estado de lease são relidos durante cada chamada.

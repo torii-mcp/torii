@@ -17,12 +17,12 @@ torii provider install --help
 | `torii --version` ou `torii -V` | imprime a versão do binário |
 | `torii init` | cria raiz e settings, sem instalar providers |
 | `torii config-dir` | imprime o diretório de configuração |
-| `torii self update [--check]` | atualiza o próprio binário a partir da última release |
+| `torii self upgrade [--check]` | troca o próprio binário pela última release |
 | `torii provider list` | lista providers locais, versão e origem |
 | `torii provider search [query]` | pesquisa o catálogo configurado |
 | `torii provider install <source>` | instala nome, diretório, archive ou URL HTTPS |
 | `torii provider setup <provider> <setup>` | aplica setup read-only sobre rules vazio |
-| `torii provider update <provider>` | atualiza somente arquivos gerenciados pelo pacote |
+| `torii provider upgrade <provider>` | troca somente arquivos gerenciados pelo pacote |
 | `torii policy show <tool> [target]` | imprime a política ativa e avisa sobre accepts ignorados |
 | `torii policy edit <tool> [target] [--create]` | abre a política no editor, valida e só então substitui |
 | `torii reauth <tool> [target]` | força autenticação gerenciada no escopo |
@@ -39,9 +39,19 @@ torii provider install --help
 | `torii agent status <agent>` | mostra o estado MCP/hook e sua propriedade |
 | `torii agent uninstall <agent> [--hook]` | remove toda a integração ou somente o hook |
 
-Install recusa destino existente. Setup recusa rules não vazio. Update requer lock de pacote e preserva rules, `.env`, grants, targets, cache e autenticação. Alterações no conjunto/configuração de providers exigem reiniciar o MCP.
+Install recusa destino existente. Setup recusa rules não vazio. Upgrade requer lock de pacote e preserva rules, `.env`, grants, targets, cache e autenticação. Alterações no conjunto/configuração de providers exigem reiniciar o MCP.
 
-`self update` é humano e explícito: nada no Torii se atualiza sozinho, e o MCP não expõe essa ação. Ele resolve a última release da plataforma pelo redirecionamento de `/releases/latest`, confere o SHA-256 publicado e substitui o binário em execução; providers, políticas, targets, grants e credenciais ficam intactos. `--check` apenas informa. Um cliente MCP já em execução continua com o binário anterior até ser reiniciado.
+## `update` e `upgrade`
+
+O Torii usa **upgrade** para trocar a versão de algo instalado — `provider upgrade` para um pacote, `self upgrade` para o próprio binário. Não existe `update` em lugar nenhum, e isso é deliberado: na convenção que ferramentas como `apt` e `brew` firmaram, `update` sincroniza um índice local antes de decidir, e `upgrade` troca o que está instalado. O Torii não mantém índice local — `provider search` e `provider install` leem o catálogo na hora, a cada chamada — então não há o que atualizar, só o que trocar de versão. Usar os dois verbos para a mesma ação obrigaria a decorar qual vale para quê.
+
+Quem digitar o nome antigo recebe a correção em vez de um erro genérico:
+
+```text
+there is no `torii provider update`; changing an installed version is `torii provider upgrade`
+```
+
+`self upgrade` é humano e explícito: nada no Torii se atualiza sozinho, e o MCP não expõe essa ação. Ele resolve a última release da plataforma pelo redirecionamento de `/releases/latest`, confere o SHA-256 publicado e substitui o binário em execução; providers, políticas, targets, grants e credenciais ficam intactos. `--check` apenas informa. Um cliente MCP já em execução continua com o binário anterior até ser reiniciado.
 
 `policy edit` abre uma cópia da política no `$VISUAL` ou `$EDITOR` — `notepad` no Windows e `vi` nos demais sistemas quando nenhum está definido. Um editor que devolve o controle imediatamente precisa ser instruído a esperar, como `code --wait` ou `subl -w`. Ao fechar, o rascunho é parseado e cada regra é compilada; só depois disso ele substitui o arquivo vivo de forma atômica. YAML malformado, regex inválido ou política vazia não chegam ao arquivo ativo, e o rascunho recusado é preservado num caminho informado no erro. Em terminal interativo, o Torii oferece reabrir o editor. Sem alterações, nada é gravado. Como `rules.yaml` é relido em cada chamada, não é preciso reiniciar o MCP.
 

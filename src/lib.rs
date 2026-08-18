@@ -10,7 +10,7 @@ pub mod mcp;
 pub mod policy;
 pub mod providers;
 pub mod runtime;
-pub mod self_update;
+pub mod self_upgrade;
 pub mod target_access;
 pub mod targets;
 

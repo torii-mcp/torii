@@ -88,4 +88,4 @@ providers/aws/
 └── auth/
 ```
 
-`install` cria rules vazio. `setup` é o único comando que escreve nele e só trabalha sobre uma política vazia. `update` substitui apenas `provider.yaml` e `.torii-package/`; não abre rules, ambiente ou estado operacional para escrita.
+`install` cria rules vazio. `setup` é o único comando que escreve nele e só trabalha sobre uma política vazia. `upgrade` substitui apenas `provider.yaml` e `.torii-package/`; não abre rules, ambiente ou estado operacional para escrita.

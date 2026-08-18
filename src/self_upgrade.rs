@@ -1,4 +1,4 @@
-//! Atualização do próprio binário. Como todo comando de control plane, é humano:
+//! Troca da versão do próprio binário. Como todo comando de control plane, é humano:
 //! nenhuma tool MCP troca o executável que aplica a política.
 
 use std::path::{Path, PathBuf};
@@ -18,7 +18,7 @@ struct Platform {
     binary: &'static str,
 }
 
-pub async fn update(check_only: bool) -> Result<i32> {
+pub async fn upgrade(check_only: bool) -> Result<i32> {
     let current = format!("v{}", env!("CARGO_PKG_VERSION"));
     let latest = latest_version().await?;
 
@@ -28,7 +28,7 @@ pub async fn update(check_only: bool) -> Result<i32> {
     }
     eprintln!("A new Torii release is available: {current} -> {latest}");
     if check_only {
-        eprintln!("Run `torii self update` to install it.");
+        eprintln!("Run `torii self upgrade` to install it.");
         return Ok(0);
     }
 
@@ -45,7 +45,7 @@ pub async fn update(check_only: bool) -> Result<i32> {
 
     let staging = tempfile::tempdir().map_err(|error| {
         Error::Package(format!(
-            "could not create the update staging directory: {error}"
+            "could not create the upgrade staging directory: {error}"
         ))
     })?;
     packages::extract_archive(&bytes, &archive, staging.path())?;
@@ -61,7 +61,7 @@ pub async fn update(check_only: bool) -> Result<i32> {
         .map_err(|error| Error::Package(format!("could not locate the running Torii: {error}")))?;
     replace_executable(&extracted, &destination)?;
 
-    eprintln!("Updated to {latest} at {}", destination.display());
+    eprintln!("Upgraded to {latest} at {}", destination.display());
     eprintln!(
         "Restart any agent client and MCP session still running the previous binary. Providers, policy, targets and credentials are untouched."
     );
@@ -186,7 +186,7 @@ fn replace_executable(source: &Path, destination: &Path) -> Result<()> {
         });
     }
     // No Windows o binário que está executando este código não pode ser apagado;
-    // ele fica para trás e a próxima atualização o remove.
+    // ele fica para trás e o próximo upgrade o remove.
     if std::fs::remove_file(&retired).is_err() && retired.exists() {
         eprintln!(
             "The previous binary is still in use and was left at {}; delete it when convenient.",

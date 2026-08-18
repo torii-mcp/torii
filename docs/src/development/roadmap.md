@@ -17,9 +17,9 @@ Esta página distingue deliberadamente o que existe do que ainda precisa de prov
 - tool Kubernetes única com targets por context;
 - CLI humana de targets e isolamento de grants/cache/auth por alias;
 - leases humanos por provider para aliases target-aware, com expiração, digest de binding, CAS, lock e escrita atômica;
-- pacotes declarativos locais/remotos, catálogo pesquisável e update que preserva estado;
+- pacotes declarativos locais/remotos, catálogo pesquisável e upgrade que preserva estado;
 - instaladores por script para Linux e Windows, com verificação do checksum publicado;
-- `self update` humano, que confere o checksum antes de trocar o binário;
+- `self upgrade` humano, que confere o checksum antes de trocar o binário;
 
 ## Reconhecido, não implementado
 

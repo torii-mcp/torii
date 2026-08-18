@@ -13,7 +13,7 @@ O Torii reduz a superfície de execução disponível ao agente. Ele não transf
 7. **Concorrência serializada por escopo de autenticação.** Chamadas que herdam o mesmo provider compartilham seu lock; cada alias `aws_profile` possui um lock próprio.
 8. **Auditoria sanitizada.** Logs usam uma referência curta e não armazenam clipboard, credenciais ou saída completa.
 9. **Target sob controle humano.** O alias resolve para configuração local; flags de troca de context, identidade e endpoint são bloqueadas.
-10. **Política pertence ao operador.** Install cria rules vazio; setup é o único writer e update nunca toca em rules ou estado operacional.
+10. **Política pertence ao operador.** Install cria rules vazio; setup é o único writer e upgrade nunca toca em rules ou estado operacional.
 11. **Lifecycle herdado pelo target.** Todo target indica um provider instalado. Somente depois de allow o Torii lê o ambiente e executa o lifecycle desse provider; o ambiente resultante é aplicado apenas ao processo filho alvo.
 12. **Grant tokenizado.** A invocação exata compara todos os tokens e seu tamanho; um grant de prefixo compara somente o prefixo explicitamente escolhido pelo operador. Nenhum grant é reconstruído como linha de shell.
 13. **Consulta de política somente leitura.** `torii_policy` pode ler as regras ativas de um provider ou target, mas não lê ambiente, credenciais, cache ou grants e não altera estado.

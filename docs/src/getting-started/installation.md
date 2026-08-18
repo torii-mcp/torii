@@ -39,7 +39,7 @@ less install.sh
 sh install.sh
 ```
 
-Reinstalar sobre uma versão anterior é o caminho normal de atualização: o script troca o binário e informa a versão anterior e a nova. Depois de instalado, `torii self update` faz o mesmo sem baixar script nenhum.
+Reinstalar sobre uma versão anterior é o caminho normal de atualização: o script troca o binário e informa a versão anterior e a nova. Depois de instalado, `torii self upgrade` faz o mesmo sem baixar script nenhum.
 
 ## Binários oficiais
 
@@ -64,11 +64,11 @@ sha256sum -c torii-v0.2.0-linux-x86_64.tar.gz.sha256
 
 O checksum é publicado junto do pacote, no mesmo release. Ele detecta download corrompido ou truncado; não é assinatura criptográfica, e o [roadmap](../development/roadmap.md) registra a assinatura de artefatos como fora do escopo atual.
 
-## Atualizar
+## Trocar de versão
 
 ```powershell
-torii self update --check   # só informa se existe versão nova
-torii self update           # baixa, confere o SHA-256 e troca o binário
+torii self upgrade --check   # só informa se existe versão nova
+torii self upgrade           # baixa, confere o SHA-256 e troca o binário
 ```
 
 O comando resolve a última release para a sua plataforma, confere o checksum e substitui o executável em execução. Configuração, políticas, targets, grants e credenciais não são tocados. No Windows, o binário anterior fica como `torii.exe.old` enquanto o processo atual o mantém aberto; a atualização seguinte o remove, e o comando avisa quando isso acontece.

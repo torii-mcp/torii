@@ -180,7 +180,7 @@ pub fn setup(paths: &ConfigPaths, provider_name: &str, setup_name: &str) -> Resu
     atomic_copy(&source, &provider.rules())
 }
 
-pub async fn update(paths: &ConfigPaths, provider_name: &str) -> Result<InstalledPackage> {
+pub async fn upgrade(paths: &ConfigPaths, provider_name: &str) -> Result<InstalledPackage> {
     let provider = paths.provider(provider_name);
     let lock = load_lock(&provider)?;
     let package = load_package(&lock.source).await?;
@@ -1074,7 +1074,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn update_preserves_rules_environment_and_runtime_state() {
+    async fn upgrade_preserves_rules_environment_and_runtime_state() {
         let temp = tempfile::TempDir::new().unwrap();
         let paths = ConfigPaths::new(temp.path().join("config"));
         let source = package("aws").to_string_lossy().into_owned();
@@ -1093,7 +1093,7 @@ mod tests {
         )
         .unwrap();
 
-        update(&paths, "aws").await.unwrap();
+        upgrade(&paths, "aws").await.unwrap();
 
         assert!(std::fs::read_to_string(provider.rules())
             .unwrap()

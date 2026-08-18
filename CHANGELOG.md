@@ -23,12 +23,15 @@ Todas as mudanças relevantes deste projeto são registradas aqui. O formato seg
 - `install.sh` e `install.ps1`: instaladores por `curl | sh` e `irm | iex` que resolvem a última
   release, conferem o SHA-256 publicado antes de extrair, instalam num diretório do usuário sem
   exigir administrador e tratam o PATH — no Linux só com `--add-to-path`, no Windows por padrão;
-- `torii self update [--check]`: baixa a release da plataforma, confere o checksum e substitui o
+- `torii self upgrade [--check]`: baixa a release da plataforma, confere o checksum e substitui o
   binário em execução, preservando configuração, políticas, targets, grants e credenciais;
 - guias de provider para Azure (`az`) e Snowflake (`snow`).
 
 ### Alterado
 
+- **`provider update` passa a ser `provider upgrade`.** O Torii não mantém índice local para
+  sincronizar, então trocar a versão instalada chama-se upgrade em todo o produto, e `update`
+  deixa de existir. Quem digitar o nome antigo recebe uma mensagem apontando o novo;
 - `agent install --hook` é recusado antes de qualquer escrita em clientes sem hook de
   pré-execução, e `agent status` informa `hook not supported` para eles;
 - `agent install opencode` recusa editar uma configuração em `opencode.jsonc` em vez de

@@ -129,13 +129,13 @@ async fn run_async(args: Vec<String>) -> Result<i32> {
             crate::agents::portable::uninstall(&paths, agent, true)?;
             Ok(0)
         }
-        [command, subcommand] if command == "self" && subcommand == "update" => {
-            crate::self_update::update(false).await
+        [command, subcommand] if command == "self" && subcommand == "upgrade" => {
+            crate::self_upgrade::upgrade(false).await
         }
         [command, subcommand, flag]
-            if command == "self" && subcommand == "update" && flag == "--check" =>
+            if command == "self" && subcommand == "upgrade" && flag == "--check" =>
         {
-            crate::self_update::update(true).await
+            crate::self_upgrade::upgrade(true).await
         }
         [command, subcommand, tool] if command == "policy" && subcommand == "show" => {
             crate::policy::show(&paths, tool, None)?;
@@ -211,13 +211,22 @@ async fn run_async(args: Vec<String>) -> Result<i32> {
             eprintln!("Setup {setup:?} applied to provider {provider:?}.");
             Ok(0)
         }
-        [command, subcommand, provider] if command == "provider" && subcommand == "update" => {
-            let installed = packages::update(&paths, provider).await?;
+        [command, subcommand, provider] if command == "provider" && subcommand == "upgrade" => {
+            let installed = packages::upgrade(&paths, provider).await?;
             eprintln!(
-                "Provider {:?} updated to {}; rules.yaml was preserved.",
+                "Provider {:?} upgraded to {}; rules.yaml was preserved.",
                 installed.name, installed.package_version
             );
             Ok(0)
+        }
+        // Nada no Torii atualiza um índice local, então trocar a versão instalada
+        // chama-se upgrade em todo o produto. O nome antigo orienta em vez de sumir.
+        [command, subcommand, ..]
+            if matches!(command.as_str(), "provider" | "self") && subcommand == "update" =>
+        {
+            Err(Error::InvalidArguments(format!(
+                "there is no `torii {command} update`; changing an installed version is `torii {command} upgrade`"
+            )))
         }
         [command, tool] if command == "reauth" => reauth(&paths, tool, None).await,
         [command, tool, target] if command == "reauth" => reauth(&paths, tool, Some(target)).await,
@@ -391,14 +400,14 @@ fn help_request(args: &[String]) -> Option<&'static str> {
 
 fn help_text(command: &[String]) -> Option<&'static str> {
     match command.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
-        [] => Some("Torii is a controlled MCP execution boundary for infrastructure agents.\n\nUsage:\n  torii                         Start the MCP stdio server\n  torii <command> [arguments]   Run a human control-plane command\n\nCommands:\n  init                          Create the configuration root\n  reauth <tool> [target]        Renew managed authentication\n  provider <command>            Install and manage provider packages\n  policy <command>              Show or edit a provider or target policy\n  self update [--check]         Update the Torii binary itself\n  target <command>              Manage aliases for target-aware providers\n  agent <command>               Configure an agent integration and optional hook\n  config-dir                    Print the configuration directory\n  --version, -V                 Print the Torii version\n\nHelp:\n  torii --help\n  torii <command> --help\n  torii help <command>\n\n`reauth` is a human-only control-plane command. An allowed MCP call prompts for managed authentication automatically when its session is unavailable."),
+        [] => Some("Torii is a controlled MCP execution boundary for infrastructure agents.\n\nUsage:\n  torii                         Start the MCP stdio server\n  torii <command> [arguments]   Run a human control-plane command\n\nCommands:\n  init                          Create the configuration root\n  reauth <tool> [target]        Renew managed authentication\n  provider <command>            Install and manage provider packages\n  policy <command>              Show or edit a provider or target policy\n  self upgrade [--check]         Upgrade the Torii binary itself\n  target <command>              Manage aliases for target-aware providers\n  agent <command>               Configure an agent integration and optional hook\n  config-dir                    Print the configuration directory\n  --version, -V                 Print the Torii version\n\nHelp:\n  torii --help\n  torii <command> --help\n  torii help <command>\n\n`reauth` is a human-only control-plane command. An allowed MCP call prompts for managed authentication automatically when its session is unavailable."),
         ["reauth"] => Some("Usage:\n  torii reauth <provider-tool> [target]\n\nForces managed authentication and validates the candidate session before replacing the current one. Use the target argument only for target-aware tools, for example `torii reauth kubectl mpce_dev`. Providers using `inherited` authentication have no renewable material managed by Torii. An aws_profile target must be authenticated by a human through its configured AWS CLI profile instead; this command does not switch or renew that profile. This command is for a human and is never exposed through MCP."),
-        ["provider"] => Some("Usage:\n  torii provider <command>\n\nCommands:\n  list                         List installed providers\n  search [query]               Search the configured catalog\n  install <source>             Install a provider package\n  setup <provider> <setup>     Apply a setup to an empty policy\n  update <provider>            Update package-managed files\n\nRun `torii provider <command> --help` for the command syntax."),
+        ["provider"] => Some("Usage:\n  torii provider <command>\n\nCommands:\n  list                         List installed providers\n  search [query]               Search the configured catalog\n  install <source>             Install a provider package\n  setup <provider> <setup>     Apply a setup to an empty policy\n  upgrade <provider>            Upgrade package-managed files\n\nRun `torii provider <command> --help` for the command syntax."),
         ["provider", "list"] => Some("Usage:\n  torii provider list\n\nLists local provider tools, logical names, executables, package versions, and sources."),
         ["provider", "search"] => Some("Usage:\n  torii provider search [query]\n\nSearches the configured provider catalog. Omitting query lists all catalog entries."),
         ["provider", "install"] => Some("Usage:\n  torii provider install <name|directory|archive|https-url>\n\nInstalls a provider package without overwriting an existing provider directory. The installed policy starts empty (default deny)."),
         ["provider", "setup"] => Some("Usage:\n  torii provider setup <provider> <setup>\n\nApplies a package setup only when the provider rules are empty. Setup is the only package command that writes policy rules."),
-        ["provider", "update"] => Some("Usage:\n  torii provider update <provider>\n\nUpdates package-managed files while preserving rules, environment, grants, targets, cache, and authentication."),
+        ["provider", "upgrade"] => Some("Usage:\n  torii provider upgrade <provider>\n\nUpgrades package-managed files from the source recorded in the lock, while preserving rules, environment, grants, targets, cache, and authentication."),
         ["target"] => Some("Usage:\n  torii target <command>\n\nCommands:\n  add <tool> <name> --context <context> --provider <tool> [--scope <scope>] [--expect <identity>]\n  add <tool> <name> --profile <aws-profile> --account-id <12-digit-id> [--region <region>]\n  activate <tool> <name> [--for <minutes>] [--add]\n  clear <tool>\n  status <tool>\n  list <tool>\n  show <tool> <name>\n  remove <tool> <name> --force\n\nTargets are human-managed aliases for target-aware provider tools. They are inactive by default and need a temporary human authorization before an agent can use them."),
         ["target", "add"] => Some("Usage:\n  torii target add <provider-tool> <name> --context <kubectl-context> --provider <identity-provider-tool> [--scope <scope>] [--expect <identity>]\n  torii target add <provider-tool> <name> --profile <aws-profile> --account-id <12-digit-id> [--region <region>]\n\nThe first form creates a kubectl_context alias authenticated by the given identity provider. --scope names the credential bucket (default: the target name, so targets stay isolated); --expect pins the identity checked by the provider's auth.identity probe before every call. The second form creates an aws_profile alias whose profile and expected account stay under human control."),
         ["target", "activate"] => Some("Usage:\n  torii target activate <provider-tool> <name> [--for <minutes>] [--add]\n\nTemporarily authorizes a configured target. Without `--add`, all other active targets for the provider are replaced. `--add` keeps them active too, which lets the agent choose any active target for operations allowed by policy. Duration must be 1 to 1440 minutes."),
@@ -408,8 +417,8 @@ fn help_text(command: &[String]) -> Option<&'static str> {
         ["target", "show"] => Some("Usage:\n  torii target show <provider-tool> <name>\n\nPrints the target configuration."),
         ["target", "remove"] => Some("Usage:\n  torii target remove <provider-tool> <name> --force\n\nRevokes the target authorization and removes the target and its isolated state. `--force` is required."),
         ["agent"] => Some("Usage:\n  torii agent <command>\n\nCommands:\n  list\n  install <agent> [--hook] [--yes]\n  status <agent>\n  uninstall <agent> [--hook]\n\n<agent> is codex, claude, gemini, cursor, antigravity, opencode, copilot, copilot-cli, or pi. Run `torii agent list` for what each adapter supports. The optional hook redirects direct provider CLI attempts to the corresponding MCP tool and exists only for agents that offer a pre-execution hook."),
-        ["self"] | ["self", "update"] => Some("Usage:
-  torii self update [--check]
+        ["self"] | ["self", "upgrade"] => Some("Usage:
+  torii self upgrade [--check]
 
 Downloads the latest published release for this platform, verifies its SHA-256 and replaces the running binary. `--check` only reports whether a newer release exists.
 

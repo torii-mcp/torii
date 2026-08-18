@@ -60,7 +60,7 @@ O repositório irmão `../awsgate` é somente referência. Nunca edite, formate,
 - Edite arquivos manualmente com patches; use formatadores para mudanças mecânicas.
 - Não edite artefatos em `target/` ou `docs/book/`.
 - Mudou configuração pública, resposta MCP, CLI ou invariantes? Atualize o livro na mesma mudança.
-- Mudou um pacote em `examples/providers/`? Valide instalação, setup e update local.
+- Mudou um pacote em `examples/providers/`? Valide instalação, setup e upgrade local.
 - Nunca coloque segredos reais em fixtures, exemplos, snapshots, logs ou mensagens de erro.
 
 ## Verificação obrigatória
