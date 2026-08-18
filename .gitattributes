@@ -1,0 +1,6 @@
+# O instalador POSIX precisa chegar ao Linux com LF: um shebang terminado em CR
+# não executa. Editar este repositório no Windows não pode quebrar o download.
+*.sh text eol=lf
+
+# O instalador do Windows é lido pelo PowerShell, que espera CRLF.
+*.ps1 text eol=crlf
