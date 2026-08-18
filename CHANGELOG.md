@@ -4,7 +4,7 @@ Todas as mudanças relevantes deste projeto são registradas aqui. O formato seg
 [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e o versionamento é
 [semântico](https://semver.org/lang/pt-BR/).
 
-## Não lançado
+## [0.3.0] — 2026-08-18
 
 ### Adicionado
 
@@ -98,5 +98,6 @@ Todas as mudanças relevantes deste projeto são registradas aqui. O formato seg
 - migração não destrutiva de `~/.config/.awsgate` para o provider AWS;
 - documentação oficial em mdBook.
 
+[0.3.0]: https://github.com/torii-mcp/torii/releases/tag/v0.3.0
 [0.2.0]: https://github.com/torii-mcp/torii/releases/tag/v0.2.0
 [0.1.0]: https://github.com/torii-mcp/torii/releases/tag/v0.1.0
