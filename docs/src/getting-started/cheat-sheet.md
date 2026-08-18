@@ -68,8 +68,16 @@ Todo pacote instala `rules.yaml` **vazio**: nada atravessa até você escrever a
 
 ## Ajustar permissões (política)
 
-Edite `providers/<provider>/rules.yaml`. Um `targets/<alias>/rules.yaml` substitui a
-política compartilhada naquele alias.
+```powershell
+torii policy show aws              # imprime a política ativa e seu caminho
+torii policy edit aws             # abre no $EDITOR, valida antes de aplicar
+torii policy edit kubectl dev     # política só daquele alias
+torii policy edit kubectl dev --create   # cria a política do alias, que substitui a compartilhada
+```
+
+O arquivo é `providers/<provider>/rules.yaml`; um `targets/<alias>/rules.yaml` substitui a
+política compartilhada naquele alias. `policy edit` edita uma cópia: YAML malformado ou regex
+inválido nunca chega ao arquivo vivo, e o rascunho recusado é preservado.
 
 ```yaml
 version: "1"

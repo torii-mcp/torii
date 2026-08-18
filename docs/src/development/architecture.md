@@ -6,6 +6,7 @@ O entrypoint `src/main.rs` delega a `app`, que separa prompt interno, control pl
 src/
 ├── app.rs                  startup e CLI de controle
 ├── targets.rs              control plane de targets
+├── policy.rs               edição humana validada das políticas
 ├── agents/codex.rs         integração Codex e guard compartilhado de shell
 ├── agents/portable.rs      adapters JSON: Claude, Gemini, Cursor, Antigravity, opencode, Copilot e pi
 ├── mcp/server.rs           protocolo e tools dinâmicas

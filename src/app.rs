@@ -129,6 +129,23 @@ async fn run_async(args: Vec<String>) -> Result<i32> {
             crate::agents::portable::uninstall(&paths, agent, true)?;
             Ok(0)
         }
+        [command, subcommand, tool] if command == "policy" && subcommand == "show" => {
+            crate::policy::show(&paths, tool, None)?;
+            Ok(0)
+        }
+        [command, subcommand, tool, target] if command == "policy" && subcommand == "show" => {
+            crate::policy::show(&paths, tool, Some(target))?;
+            Ok(0)
+        }
+        [command, subcommand, tool] if command == "policy" && subcommand == "edit" => {
+            crate::policy::edit(&paths, tool, None, false)?;
+            Ok(0)
+        }
+        [command, subcommand, tool, rest @ ..] if command == "policy" && subcommand == "edit" => {
+            let (target, create) = policy_edit_options(rest)?;
+            crate::policy::edit(&paths, tool, target, create)?;
+            Ok(0)
+        }
         [command, subcommand] if command == "provider" && subcommand == "list" => {
             let registry = ProviderRegistry::load(&paths)?;
             for provider in registry.providers() {
@@ -299,6 +316,35 @@ fn is_portable_agent(agent: &str) -> bool {
     )
 }
 
+/// `policy edit <tool> [target] [--create]`: o alvo é posicional e `--create` só
+/// faz sentido para um target, que é o único escopo que o Torii pode criar.
+fn policy_edit_options(rest: &[String]) -> Result<(Option<&str>, bool)> {
+    let mut target = None;
+    let mut create = false;
+    for argument in rest {
+        match argument.as_str() {
+            "--create" if !create => create = true,
+            value if value.starts_with('-') => {
+                return Err(Error::InvalidArguments(format!(
+                    "unexpected argument {value:?}; expected an optional target and --create"
+                )));
+            }
+            value if target.is_none() => target = Some(value),
+            value => {
+                return Err(Error::InvalidArguments(format!(
+                    "unexpected argument {value:?}; only one target can be edited at a time"
+                )));
+            }
+        }
+    }
+    if create && target.is_none() {
+        return Err(Error::InvalidArguments(
+            "--create applies to a target policy; pass the target name to create it".into(),
+        ));
+    }
+    Ok((target, create))
+}
+
 fn install_flags(flags: &[String]) -> Result<(bool, bool)> {
     let mut with_hook = false;
     let mut assume_yes = false;
@@ -337,7 +383,7 @@ fn help_request(args: &[String]) -> Option<&'static str> {
 
 fn help_text(command: &[String]) -> Option<&'static str> {
     match command.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
-        [] => Some("Torii is a controlled MCP execution boundary for infrastructure agents.\n\nUsage:\n  torii                         Start the MCP stdio server\n  torii <command> [arguments]   Run a human control-plane command\n\nCommands:\n  init                          Create the configuration root\n  reauth <tool> [target]        Renew managed authentication\n  provider <command>            Install and manage provider packages\n  target <command>              Manage aliases for target-aware providers\n  agent <command>               Configure an agent integration and optional hook\n  config-dir                    Print the configuration directory\n  --version, -V                 Print the Torii version\n\nHelp:\n  torii --help\n  torii <command> --help\n  torii help <command>\n\n`reauth` is a human-only control-plane command. An allowed MCP call prompts for managed authentication automatically when its session is unavailable."),
+        [] => Some("Torii is a controlled MCP execution boundary for infrastructure agents.\n\nUsage:\n  torii                         Start the MCP stdio server\n  torii <command> [arguments]   Run a human control-plane command\n\nCommands:\n  init                          Create the configuration root\n  reauth <tool> [target]        Renew managed authentication\n  provider <command>            Install and manage provider packages\n  policy <command>              Show or edit a provider or target policy\n  target <command>              Manage aliases for target-aware providers\n  agent <command>               Configure an agent integration and optional hook\n  config-dir                    Print the configuration directory\n  --version, -V                 Print the Torii version\n\nHelp:\n  torii --help\n  torii <command> --help\n  torii help <command>\n\n`reauth` is a human-only control-plane command. An allowed MCP call prompts for managed authentication automatically when its session is unavailable."),
         ["reauth"] => Some("Usage:\n  torii reauth <provider-tool> [target]\n\nForces managed authentication and validates the candidate session before replacing the current one. Use the target argument only for target-aware tools, for example `torii reauth kubectl mpce_dev`. Providers using `inherited` authentication have no renewable material managed by Torii. An aws_profile target must be authenticated by a human through its configured AWS CLI profile instead; this command does not switch or renew that profile. This command is for a human and is never exposed through MCP."),
         ["provider"] => Some("Usage:\n  torii provider <command>\n\nCommands:\n  list                         List installed providers\n  search [query]               Search the configured catalog\n  install <source>             Install a provider package\n  setup <provider> <setup>     Apply a setup to an empty policy\n  update <provider>            Update package-managed files\n\nRun `torii provider <command> --help` for the command syntax."),
         ["provider", "list"] => Some("Usage:\n  torii provider list\n\nLists local provider tools, logical names, executables, package versions, and sources."),
@@ -354,6 +400,9 @@ fn help_text(command: &[String]) -> Option<&'static str> {
         ["target", "show"] => Some("Usage:\n  torii target show <provider-tool> <name>\n\nPrints the target configuration."),
         ["target", "remove"] => Some("Usage:\n  torii target remove <provider-tool> <name> --force\n\nRevokes the target authorization and removes the target and its isolated state. `--force` is required."),
         ["agent"] => Some("Usage:\n  torii agent <command>\n\nCommands:\n  list\n  install <agent> [--hook] [--yes]\n  status <agent>\n  uninstall <agent> [--hook]\n\n<agent> is codex, claude, gemini, cursor, antigravity, opencode, copilot, copilot-cli, or pi. Run `torii agent list` for what each adapter supports. The optional hook redirects direct provider CLI attempts to the corresponding MCP tool and exists only for agents that offer a pre-execution hook."),
+        ["policy"] => Some("Usage:\n  torii policy <command>\n\nCommands:\n  show <tool> [target]              Print the active policy file\n  edit <tool> [target] [--create]   Edit the policy in $VISUAL/$EDITOR\n\nPolicy is a human control-plane concern and is never exposed as an MCP tool. Rules are reread on every call, so changing them needs no restart."),
+        ["policy", "show"] => Some("Usage:\n  torii policy show <provider-tool> [target]\n\nPrints the active rules file and warns about accept rules ignored for being below minimum_accept_tokens. With a target, prints the target policy that replaces the shared one, or says the shared policy applies."),
+        ["policy", "edit"] => Some("Usage:\n  torii policy edit <provider-tool> [target] [--create]\n\nOpens the rules file in $VISUAL or $EDITOR (notepad on Windows, vi elsewhere) through a draft copy. The draft is parsed and every rule is compiled before it replaces the live file, so an invalid regex or malformed YAML never reaches the policy. An invalid draft is kept so no edit is lost. `--create` starts a target policy that replaces the shared one for that alias.\n\nAn editor that returns immediately must be told to wait, for example `code --wait` or `subl -w`."),
         ["agent", "list"] => Some("Usage:\n  torii agent list\n\nLists the implemented agent adapters and whether each one supports the hook."),
         ["agent", "install"] => Some("Usage:\n  torii agent install <agent> [--hook] [--yes]\n\nRegisters the Torii MCP server in the selected agent configuration. `--hook` also installs the direct-provider CLI guard and is rejected for agents without a pre-execution hook. `--yes` confirms an adapter that needs acknowledgement, such as pi, whose MCP support depends on an extension installed by the human."),
         ["agent", "status"] => Some("Usage:\n  torii agent status <agent>\n\nShows whether the MCP integration and hook are installed and managed by this Torii configuration. Agents without a pre-execution hook report the hook as unsupported."),

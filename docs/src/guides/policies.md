@@ -1,5 +1,16 @@
 # Escrever políticas
 
+Para abrir a política no seu editor, com validação antes de aplicar:
+
+```powershell
+torii policy show aws                    # imprime a política ativa e seu caminho
+torii policy edit aws                    # edita a política compartilhada do provider
+torii policy edit kubectl dev            # edita a política daquele alias
+torii policy edit kubectl dev --create   # cria a política do alias
+```
+
+`policy edit` trabalha sobre uma cópia: ao fechar o editor, o Torii parseia o YAML e compila cada regra, e só então substitui o arquivo vivo. Uma regex inválida ou um YAML malformado é recusado antes de virar política, e o rascunho é preservado para você corrigir. Nada impede editar `rules.yaml` à mão — o comando existe para que um erro de digitação não vire uma negação inesperada no meio de uma sessão do agente. Detalhes em [CLI de controle](../reference/cli.md).
+
 Cada provider possui seu próprio `rules.yaml`. Em provider target-aware, um `rules.yaml` dentro do target substitui a política compartilhada somente naquele alias.
 
 Antes de Jasper consultar `accept`, grants ou uma aprovação de operação para um target-aware, o alias precisa de lease humano válido. O lease autoriza o uso temporário do binding, não a operação; rules e grants continuam sendo necessários. Revogar o lease não apaga grants existentes, mas impede seu uso até que o alias seja ativado novamente.

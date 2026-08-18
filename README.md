@@ -121,6 +121,13 @@ Use `TORII_NO_GUI=1` em CI/headless. Nesse modo, chamadas não resolvidas são n
 
 Cada subdiretório em `providers/` possui `provider.yaml`, `rules.yaml` e, quando instalado como pacote, metadados imutáveis em `.torii-package/`. Um provider target-aware também possui `targets/<alias>/target.yaml`; grants, cache, ambiente e autenticação ficam fora do conteúdo atualizado do pacote. Consulte as [fixtures de pacote](examples/providers).
 
+Para revisar ou editar a política com validação antes de aplicar:
+
+```powershell
+torii policy show aws
+torii policy edit aws
+```
+
 As regras descrevem somente o que atravessa:
 
 ```yaml

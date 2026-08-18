@@ -16,6 +16,10 @@ Todas as mudanças relevantes deste projeto são registradas aqui. O formato seg
   hooks próprio em `~/.gemini/config/hooks.json` e o remove inteiro na desinstalação;
 - `--yes` em `agent install` para confirmar o adapter do pi, cujo suporte a MCP depende de uma
   extensão instalada pelo humano; sem terminal interativo a instalação é recusada;
+- `torii policy show` e `torii policy edit` no control plane humano: a edição abre uma cópia
+  no `$VISUAL`/`$EDITOR`, parseia e compila cada regra antes de substituir o arquivo vivo de
+  forma atômica, preserva o rascunho recusado e avisa sobre accepts abaixo de
+  `minimum_accept_tokens`; `--create` inicia a política de um target;
 - guias de provider para Azure (`az`) e Snowflake (`snow`).
 
 ### Alterado

@@ -7,6 +7,7 @@ pub mod core;
 pub mod error;
 pub mod jasper;
 pub mod mcp;
+pub mod policy;
 pub mod providers;
 pub mod runtime;
 pub mod target_access;
