@@ -445,7 +445,17 @@ fn validate_target_providers(providers: &BTreeMap<String, Arc<Provider>>) -> Res
             let self_managed =
                 matches!(mode, Some(TargetMode::AwsProfile | TargetMode::Credentials))
                     && target.config.identity.provider == provider.config.tool;
-            if identity_provider.uses_targets() && !self_managed {
+            // Um identity provider target-aware é recusado porque a autenticação
+            // dele depende do binding do alias — qual profile, qual context. A
+            // exceção é o modo `credentials`, em que a autenticação é por escopo
+            // de credencial e não depende de target algum: emprestar o lifecycle
+            // dele a outro provider é igual a emprestar o de um provider simples.
+            let identity_is_scope_based = identity_provider
+                .config
+                .targeting
+                .as_ref()
+                .is_some_and(|targeting| matches!(targeting.mode, TargetMode::Credentials));
+            if identity_provider.uses_targets() && !self_managed && !identity_is_scope_based {
                 return Err(fail(format!(
                     "identity provider tool {:?} cannot require a target",
                     target.config.identity.provider

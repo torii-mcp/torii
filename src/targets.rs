@@ -202,7 +202,14 @@ fn validate_identity_provider(
                 "identity provider tool {tool:?} is not installed; install the provider before adding this target"
             ))
         })?;
-    if provider.uses_targets() {
+    // Mesma regra do registry: só o modo `credentials` autentica por escopo, sem
+    // depender de um binding, e por isso pode servir de identity provider a outro.
+    let scope_based = provider
+        .config
+        .targeting
+        .as_ref()
+        .is_some_and(|targeting| matches!(targeting.mode, TargetMode::Credentials));
+    if provider.uses_targets() && !scope_based {
         return Err(Error::InvalidArguments(format!(
             "identity provider tool {tool:?} cannot require a target"
         )));

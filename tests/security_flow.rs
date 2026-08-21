@@ -177,6 +177,44 @@ async fn a_credentials_target_may_be_its_own_identity_provider() {
     assert!(provider.target("mdb-prd").is_some());
 }
 
+/// Um provider no modo `credentials` pode emprestar o lifecycle de autenticação a
+/// outro provider, como o `kubectl` faz com o `aws`. A autenticação dele é por
+/// escopo e não depende de alias nenhum, então não há ambiguidade — o que não vale
+/// para os modos cuja autenticação depende do binding.
+#[tokio::test]
+async fn a_credentials_provider_may_authenticate_another_providers_target() {
+    let (_temp, paths, registry) = credentials_fixture(CREDENTIALS_TARGET);
+    drop(registry);
+    let kubectl = paths.provider("kubectl");
+    kubectl.ensure().unwrap();
+    fs::write(
+        kubectl.config(),
+        "version: '1'\nname: kubectl\ntool: kubectl\ndescription: t\ncommand: executable-that-must-not-run\ntargeting: { mode: kubectl_context }\nauth: { strategy: inherited }\nenvironment: { file: .env }\n",
+    )
+    .unwrap();
+    fs::write(kubectl.rules(), "version: '1.0'\ndeny: []\naccept: []\n").unwrap();
+    let target = kubectl.target("dev");
+    target.ensure().unwrap();
+    fs::write(
+        target.config(),
+        "version: '1'\nname: dev\ncontext: algum-context\nidentity:\n  provider: awsx\n  scope: dev\n",
+    )
+    .unwrap();
+
+    let registry = ProviderRegistry::load(&paths).expect("o target do kubectl deve carregar");
+    let scope = registry
+        .get("kubectl")
+        .unwrap()
+        .target("dev")
+        .unwrap()
+        .config
+        .credential_scope()
+        .to_string();
+    // O balde do kubectl é o que o alias dele nomeia, independente dos aliases do
+    // provider de identidade.
+    assert_eq!(scope, "dev");
+}
+
 /// Context, profile e region não têm efeito nenhum neste modo: aceitar em
 /// silêncio seria prometer um binding que não existe.
 #[tokio::test]
