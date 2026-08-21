@@ -30,6 +30,7 @@ torii provider install --help
 | `torii target add <tool> <name> --profile <profile> --account-id <12-dígitos> [--region <região>]` | cria um alias `aws_profile` com profile e conta esperada sob controle humano |
 | `torii target list <tool>` | lista aliases e seus bindings fixos no control plane humano |
 | `torii target show <tool> <name>` | imprime `target.yaml` |
+| `torii target add <tool> <name> [--provider <tool>] [--scope <scope>] [--expect <identidade>]` | cria alias no modo `credentials`; sem `--provider`, o alias autentica pela própria tool |
 | `torii target activate <tool> <name> [--for <minutes>] [--add]` | concede lease temporário ao alias; por padrão substitui todos os aliases ativos da tool |
 | `torii target status <tool>` | mostra o estado dos leases e suas expirações |
 | `torii target clear <tool>` | revoga todos os leases da tool, sem alterar o estado operacional |

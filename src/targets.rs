@@ -60,6 +60,62 @@ pub async fn add(
     write_target(&provider, name, &config)
 }
 
+/// Cria um alias cujo binding é o próprio balde de credenciais.
+///
+/// Não há context nem profile para validar: o que identifica o alias é o escopo
+/// de credencial e, quando declarado, a identidade que aquelas credenciais
+/// precisam carregar. O provider de identidade pode ser o próprio tool, que é o
+/// arranjo normal, ou outro provider instalado sem targets.
+pub fn add_credentials(
+    paths: &ConfigPaths,
+    tool: &str,
+    name: &str,
+    identity_provider: Option<&str>,
+    options: IdentityOptions,
+) -> Result<()> {
+    if !valid_name(name) {
+        return Err(Error::InvalidArguments(format!(
+            "invalid target name {name:?}"
+        )));
+    }
+    let registry = ProviderRegistry::load(paths)?;
+    let provider = targeted_provider(&registry, tool)?;
+    require_mode(&provider, TargetMode::Credentials)?;
+    let identity_provider = match identity_provider {
+        Some(name) if name != provider.config.tool => validate_identity_provider(&registry, name)?
+            .config
+            .tool
+            .clone(),
+        // O padrão é o próprio tool: o alias autentica no balde dele mesmo.
+        _ => provider.config.tool.clone(),
+    };
+    if identity_provider == provider.config.tool {
+        check_expect_probe(&provider, &options)?;
+    } else {
+        let resolved = validate_identity_provider(&registry, &identity_provider)?;
+        check_expect_probe(&resolved, &options)?;
+    }
+    let destination = provider.paths.target(name);
+    if destination.base().exists() {
+        return Err(Error::InvalidArguments(format!(
+            "target {name:?} already exists for provider tool {tool:?}"
+        )));
+    }
+    let config = TargetConfig {
+        version: "1".into(),
+        name: name.into(),
+        context: None,
+        region: None,
+        identity: TargetIdentity {
+            provider: identity_provider,
+            scope: options.scope,
+            profile: None,
+            expect: options.expect,
+        },
+    };
+    write_target(&provider, name, &config)
+}
+
 pub async fn add_aws_profile(
     paths: &ConfigPaths,
     tool: &str,
@@ -171,6 +227,13 @@ pub fn list(paths: &ConfigPaths, tool: &str) -> Result<()> {
         let identity = &target.config.identity;
         let scope = target.config.credential_scope();
         match target_mode(&provider)? {
+            // Não há binding externo para mostrar; a coluna dele fica vazia.
+            TargetMode::Credentials => println!(
+                "{}\t-\t{}\t{}",
+                target.config.name,
+                identity.expect.as_deref().unwrap_or("-"),
+                scope,
+            ),
             TargetMode::KubectlContext => println!(
                 "{}\t{}\t{}\t{}",
                 target.config.name,

@@ -8,6 +8,17 @@ Todas as mudanças relevantes deste projeto são registradas aqui. O formato seg
 
 ### Adicionado
 
+- **modo de target `credentials`.** Um terceiro `targeting.mode` em que o alias é o balde de
+  credencial e nada é injetado no argv: serve a CLIs cuja credencial vem do ambiente, como o
+  `aws` com `auth.strategy: environment`, em que cada alias coleta as próprias chaves pela
+  janela e ganha lease, camada de política, grants isolados e verificação de identidade pelo
+  probe do provider. O alias pode autenticar pela própria tool target-aware, arranjo antes
+  permitido só no `aws_profile`. `context`, `identity.profile` e `region` são recusados, porque
+  seriam no-ops silenciosos. Como o modo não injeta binding, ele também não traz baseline de
+  flags bloqueadas: `targeting.locked_options` precisa travar toda opção que redirecione a
+  origem da credencial (`--profile` e `--endpoint-url`, no AWS CLI), ou o agente sai do alias
+  pelo argv. `torii target add <tool> <name> [--provider <tool>] [--scope <scope>] [--expect
+  <identidade>]` cria o alias;
 - **decisão permanente na janela de autorização.** No editor de escopo de uma chamada não
   resolvida, a caixa dos argumentos fixos ganha dois botões de manter pressionado por cinco
   segundos: um grava o prefixo escolhido no `accept` da política e executa a chamada, o outro

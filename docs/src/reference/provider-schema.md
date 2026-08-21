@@ -66,6 +66,33 @@ O registry valida a referência durante o startup, mas o Jasper decide antes de 
 
 Um provider instalado como dependência de autenticação continua publicado como tool MCP nesta versão. Mantenha seu `rules.yaml` em default deny quando o agente não precisar invocá-lo diretamente.
 
+## Targeting por balde de credencial
+
+```yaml
+targeting:
+  mode: credentials
+  locked_options:
+    - --profile
+    - --endpoint-url
+```
+
+Neste modo o alias **é** o balde de credencial e nada é injetado no argv: as credenciais que o Torii guarda para aquele escopo são o binding inteiro. Serve para um CLI cuja credencial vem do ambiente, como o `aws` com `auth.strategy: environment`, em que cada alias coleta as suas próprias chaves pela janela.
+
+```yaml
+version: "1"
+name: mdb-prd
+identity:
+  provider: awsx          # normalmente a própria tool
+  scope: mdb-prd          # opcional; padrão é o nome do alias
+  expect: "111122223333"  # opcional; conferido pelo probe antes de executar
+```
+
+`context`, `identity.profile` e `region` são recusados: como nada é injetado, eles seriam no-ops silenciosos. `identity.provider` pode ser a própria tool target-aware — o arranjo normal — ou outro provider instalado que não exija target, como no `kubectl_context`.
+
+O modo não traz baseline de flags bloqueadas, porque não existe binding para proteger. **Isso torna `locked_options` obrigatório na prática:** trave toda opção do CLI que redirecione a origem da credencial, ou o agente sai do alias pelo argv. No AWS CLI, `--profile` faz o CLI ignorar as chaves injetadas e usar um profile local; `--endpoint-url` desvia o destino. Sem essas duas travadas, o alias não contém nada.
+
+Com `expect`, toda chamada permitida roda o probe `auth.identity` antes de executar e exige a identidade declarada — colar por engano a credencial de um ambiente no alias de outro é bloqueado antes de qualquer comando.
+
 ## Targeting AWS por profile
 
 ```yaml

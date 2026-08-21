@@ -94,6 +94,15 @@ pub fn human_binding(provider: &Provider, target_name: &str) -> Result<String> {
     let identity = &target.config.identity;
     let scope = target.config.credential_scope();
     Ok(match mode {
+        // There is no external binding to show: the credential bucket and the
+        // identity it must carry are the whole alias.
+        TargetMode::Credentials => {
+            let expected = identity.expect.as_deref().unwrap_or("unchecked");
+            format!(
+                "credenciais do escopo={scope} · identidade esperada={expected} · identity provider={}",
+                identity.provider
+            )
+        }
         TargetMode::KubectlContext => format!(
             "context={} · identity provider={} · scope={scope}",
             target.config.context.as_deref().expect("validated context"),

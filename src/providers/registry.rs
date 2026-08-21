@@ -378,6 +378,21 @@ fn validate_target(config: &TargetConfig, paths: &TargetPaths, mode: TargetMode)
                 ));
             }
         }
+        TargetMode::Credentials => {
+            // Nothing is injected, so a context, a profile or a region here would
+            // be a silent no-op: refuse them instead of pretending they apply.
+            if config.context.is_some() {
+                return Err(fail("credentials target cannot contain context".into()));
+            }
+            if config.identity.profile.is_some() {
+                return Err(fail(
+                    "credentials target cannot contain identity.profile".into(),
+                ));
+            }
+            if config.region.is_some() {
+                return Err(fail("credentials target cannot contain region".into()));
+            }
+        }
         TargetMode::AwsProfile => {
             if config.context.is_some() {
                 return Err(fail("aws_profile target cannot contain context".into()));
@@ -422,10 +437,14 @@ fn validate_target_providers(providers: &BTreeMap<String, Arc<Provider>>) -> Res
                         target.config.identity.provider
                     ))
                 })?;
-            // aws_profile is the one self-managed mode: the target authenticates
-            // through the very tool it belongs to, and that tool is target-aware.
-            let self_managed = matches!(mode, Some(TargetMode::AwsProfile))
-                && target.config.identity.provider == provider.config.tool;
+            // Two modes may be self-managed: the target authenticates through the
+            // very tool it belongs to, and that tool is target-aware. In
+            // `aws_profile` the profile is what identifies the alias; in
+            // `credentials` the alias *is* the credential bucket, so pointing at
+            // its own tool is the normal arrangement.
+            let self_managed =
+                matches!(mode, Some(TargetMode::AwsProfile | TargetMode::Credentials))
+                    && target.config.identity.provider == provider.config.tool;
             if identity_provider.uses_targets() && !self_managed {
                 return Err(fail(format!(
                     "identity provider tool {:?} cannot require a target",

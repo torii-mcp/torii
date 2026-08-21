@@ -111,6 +111,148 @@ environment: { file: .env }
     (temp, paths, registry)
 }
 
+/// Um provider target-aware no modo `credentials`: o alias é o balde de
+/// credencial, nada é injetado no argv, e a autenticação é a janela do próprio
+/// tool. É o arranjo do AWS por ambiente.
+fn credentials_fixture(
+    target_config: &str,
+) -> (TempDir, ConfigPaths, Result<ProviderRegistry, ()>) {
+    let temp = TempDir::new().unwrap();
+    let paths = ConfigPaths::new(temp.path().to_path_buf());
+    let provider = paths.provider("awsx");
+    provider.ensure().unwrap();
+    fs::write(
+        provider.config(),
+        r#"
+version: "1"
+name: awsx
+tool: awsx
+description: AWS por balde de credencial
+command: executable-that-must-not-run
+targeting:
+  mode: credentials
+  locked_options: ["--profile", "--endpoint-url"]
+policy: { minimum_accept_tokens: 2 }
+auth:
+  strategy: environment
+  fields:
+    - { name: AWS_ACCESS_KEY_ID, required: true, secret: false }
+    - { name: AWS_SECRET_ACCESS_KEY, required: true, secret: true }
+  inject:
+    environment:
+      AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID}"
+      AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY}"
+  validate: { command: validator-that-must-not-run, args: [] }
+  identity:
+    command: validator-that-must-not-run
+    args: []
+    field: Account
+environment: { file: .env }
+"#,
+    )
+    .unwrap();
+    fs::write(
+        provider.rules(),
+        "version: '1.0'\ndeny: ['iam']\naccept: ['s3 ls']\n",
+    )
+    .unwrap();
+    let target = provider.target("mdb-prd");
+    target.ensure().unwrap();
+    fs::write(target.config(), target_config).unwrap();
+    let registry = ProviderRegistry::load(&paths).map_err(|_| ());
+    (temp, paths, registry)
+}
+
+const CREDENTIALS_TARGET: &str =
+    "version: '1'\nname: mdb-prd\nidentity:\n  provider: awsx\n  expect: '111122223333'\n";
+
+/// O arranjo normal do modo: o alias autentica no balde do próprio tool, que é
+/// target-aware. Nos outros modos isso é recusado.
+#[tokio::test]
+async fn a_credentials_target_may_be_its_own_identity_provider() {
+    let (_temp, _paths, registry) = credentials_fixture(CREDENTIALS_TARGET);
+    let registry = registry.expect("o alias deve carregar");
+    let provider = registry.get("awsx").unwrap();
+    assert!(provider.uses_targets());
+    assert!(provider.target("mdb-prd").is_some());
+}
+
+/// Context, profile e region não têm efeito nenhum neste modo: aceitar em
+/// silêncio seria prometer um binding que não existe.
+#[tokio::test]
+async fn a_credentials_target_refuses_a_binding_it_would_ignore() {
+    for field in [
+        "context: algum-context\n",
+        "identity:\n  provider: awsx\n  profile: algum-profile\n",
+        "region: sa-east-1\n",
+    ] {
+        let config = format!("version: '1'\nname: mdb-prd\nidentity:\n  provider: awsx\n{field}");
+        let config = if field.starts_with("identity:") {
+            format!("version: '1'\nname: mdb-prd\n{field}")
+        } else {
+            config
+        };
+        let (_temp, _paths, registry) = credentials_fixture(&config);
+        assert!(registry.is_err(), "deveria recusar: {field}");
+    }
+}
+
+/// A opção que redirecionaria a origem da credencial é recusada antes de
+/// qualquer regra, ambiente ou autenticação. É o que impede o agente de sair do
+/// alias pelo argv.
+#[tokio::test]
+async fn a_credentials_target_rejects_an_option_that_redirects_credentials() {
+    let (_temp, paths, registry) = credentials_fixture(CREDENTIALS_TARGET);
+    let registry = registry.unwrap();
+    let error = Invoker::new(paths, Settings::default(), registry)
+        .invoke(
+            "awsx",
+            Some("mdb-prd"),
+            &["s3".into(), "ls".into(), "--profile".into(), "outra".into()],
+        )
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("locked by target"), "{error}");
+}
+
+/// O alias começa inativo como qualquer target: sem lease humano, nada atravessa,
+/// nem mesmo o que a política aceita.
+#[tokio::test]
+async fn a_credentials_target_starts_inactive() {
+    let (_temp, paths, registry) = credentials_fixture(CREDENTIALS_TARGET);
+    let registry = registry.unwrap();
+
+    let _env_lock = GUI_ENV_LOCK.lock().await;
+    std::env::set_var("TORII_NO_GUI", "1");
+    let result = Invoker::new(paths, Settings::default(), registry)
+        .invoke("awsx", Some("mdb-prd"), &["s3".into(), "ls".into()])
+        .await
+        .unwrap();
+    std::env::remove_var("TORII_NO_GUI");
+
+    assert_eq!(result.decision.result, DecisionResult::Deny);
+    assert_eq!(result.decision.source, "target-inactive");
+    assert!(result.execution.is_none());
+}
+
+/// O piso de deny compartilhado vale no alias como em qualquer target-aware, e é
+/// avaliado antes do lease.
+#[tokio::test]
+async fn a_credentials_target_carries_the_shared_deny_floor() {
+    let (_temp, paths, registry) = credentials_fixture(CREDENTIALS_TARGET);
+    let registry = registry.unwrap();
+    let result = Invoker::new(paths, Settings::default(), registry)
+        .invoke(
+            "awsx",
+            Some("mdb-prd"),
+            &["iam".into(), "list-users".into()],
+        )
+        .await
+        .unwrap();
+    assert_eq!(result.decision.source, "explicit-deny");
+    assert_eq!(result.decision.rule.as_deref(), Some("iam"));
+}
+
 fn authorize_target(registry: &ProviderRegistry, tool: &str, target: &str) {
     let provider = registry.get(tool).unwrap();
     let known = target_access::known_targets(&provider).unwrap();

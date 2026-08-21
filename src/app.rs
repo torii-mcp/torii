@@ -252,6 +252,24 @@ async fn run_async(args: Vec<String>) -> Result<i32> {
             eprintln!("Target {name:?} added to provider tool {tool:?}.");
             Ok(0)
         }
+        // Sem `--context` e sem `--profile`, o alias é um balde de credencial.
+        [command, subcommand, tool, name, options @ ..]
+            if command == "target"
+                && subcommand == "add"
+                && !options.iter().any(|option| option == "--context")
+                && !options.iter().any(|option| option == "--profile") =>
+        {
+            let (identity_provider, identity_options) = parse_credentials_add_options(options)?;
+            crate::targets::add_credentials(
+                &paths,
+                tool,
+                name,
+                identity_provider.as_deref(),
+                identity_options,
+            )?;
+            eprintln!("Target {name:?} added to provider tool {tool:?}.");
+            Ok(0)
+        }
         [command, subcommand, tool, name, options @ ..]
             if command == "target"
                 && subcommand == "add"
@@ -470,6 +488,36 @@ fn parse_target_activation_options(
     let minutes = minutes.unwrap_or(default_minutes);
     crate::target_access::validate_duration(minutes)?;
     Ok((minutes, add))
+}
+
+/// `target add <tool> <name> [--provider <tool>] [--scope <scope>] [--expect <id>]`
+fn parse_credentials_add_options(
+    options: &[String],
+) -> Result<(Option<String>, crate::targets::IdentityOptions)> {
+    let mut provider = None;
+    let mut identity = crate::targets::IdentityOptions::default();
+    let mut index = 0;
+    while index < options.len() {
+        let flag = options[index].as_str();
+        let value = || -> Result<String> {
+            let value = options
+                .get(index + 1)
+                .ok_or_else(|| Error::InvalidArguments(format!("{flag} requires a value")))?;
+            Ok(value.clone())
+        };
+        match flag {
+            "--provider" if provider.is_none() => provider = Some(value()?),
+            "--scope" if identity.scope.is_none() => identity.scope = Some(value()?),
+            "--expect" if identity.expect.is_none() => identity.expect = Some(value()?),
+            option => {
+                return Err(Error::InvalidArguments(format!(
+                    "invalid target add option {option:?}; expected `[--provider <tool>] [--scope <scope>] [--expect <identity>]`"
+                )));
+            }
+        }
+        index += 2;
+    }
+    Ok((provider, identity))
 }
 
 fn parse_kubectl_add_options(

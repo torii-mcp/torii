@@ -925,6 +925,9 @@ fn resolve_scope(
     let identity = &target.config.identity;
     let mut target_args = Vec::new();
     match targeting.mode {
+        // Nothing is appended: the credentials of this alias's scope are the whole
+        // binding, and they are injected as environment into the child process.
+        TargetMode::Credentials => {}
         TargetMode::KubectlContext => {
             target_args.push("--context".into());
             target_args.push(target.config.context.clone().expect("validated context"));
@@ -1237,6 +1240,67 @@ environment: { file: .env }
         assert_eq!(scope.auth.scope, "lab");
         assert!(scope.auth.expect.is_none());
         assert!(scope.auth.profile.is_none());
+    }
+
+    /// No modo `credentials` o alias não acrescenta nada à linha de comando: a
+    /// credencial do escopo é o binding inteiro. Se algo fosse injetado aqui, o
+    /// CLI receberia uma opção que o humano nunca viu na janela.
+    #[test]
+    fn credentials_target_injects_nothing_and_authenticates_in_its_own_bucket() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let paths = ConfigPaths::new(temp.path().to_path_buf());
+        let provider_paths = paths.provider("awsx");
+        provider_paths.ensure().unwrap();
+        fs::write(
+            provider_paths.config(),
+            r#"
+version: "1"
+name: awsx
+tool: awsx
+description: AWS por balde de credencial
+command: aws
+targeting:
+  mode: credentials
+  locked_options: ["--profile"]
+auth:
+  strategy: environment
+  fields:
+    - { name: AWS_ACCESS_KEY_ID, required: true, secret: false }
+  inject:
+    environment: { AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID}" }
+  validate: { command: aws, args: [sts, get-caller-identity] }
+  identity: { command: aws, args: [sts, get-caller-identity], field: Account }
+environment: { file: .env }
+"#,
+        )
+        .unwrap();
+        fs::write(
+            provider_paths.rules(),
+            "version: '1.0'\ndeny: []\naccept: ['s3 ls']\n",
+        )
+        .unwrap();
+        let target = provider_paths.target("mdb-prd");
+        target.ensure().unwrap();
+        fs::write(
+            target.config(),
+            "version: '1'\nname: mdb-prd\nidentity:\n  provider: awsx\n  expect: '111122223333'\n",
+        )
+        .unwrap();
+
+        let registry = ProviderRegistry::load(&paths).unwrap();
+        let provider = registry.get("awsx").unwrap();
+        let scope = resolve_scope(&provider, Some("mdb-prd"), &["s3".into(), "ls".into()]).unwrap();
+
+        assert!(scope.target_args.is_empty(), "{:?}", scope.target_args);
+        assert!(scope.trusted_env.is_empty());
+        // O alias autentica no próprio tool, num balde com o nome do alias.
+        assert_eq!(scope.auth.provider, "awsx");
+        assert_eq!(scope.auth.scope, "mdb-prd");
+        assert_eq!(scope.auth.expect.as_deref(), Some("111122223333"));
+        assert!(scope.auth.profile.is_none());
+        // A política do alias é uma camada sobre a compartilhada, não a substitui.
+        assert_eq!(scope.rules, provider_paths.rules());
+        assert_eq!(scope.target_rules, Some(target.rules()));
     }
 
     #[test]

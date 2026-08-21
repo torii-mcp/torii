@@ -32,6 +32,16 @@ pub struct TargetingConfig {
 pub enum TargetMode {
     KubectlContext,
     AwsProfile,
+    /// The alias is a credential bucket and nothing else: no binding is injected
+    /// into the argv, because the credentials Torii holds for that scope *are*
+    /// the binding. Everything else a target carries — lease, policy layer,
+    /// grants, identity check — applies unchanged.
+    ///
+    /// A provider in this mode must lock, through `targeting.locked_options`,
+    /// every option of its CLI that redirects where credentials come from
+    /// (`--profile` and `--endpoint-url` in the AWS CLI, for instance).
+    /// Otherwise the agent can step out of the alias through the argv.
+    Credentials,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -98,6 +108,10 @@ impl TargetMode {
         match self {
             Self::KubectlContext => kubectl_locked_options(),
             Self::AwsProfile => aws_profile_locked_options(),
+            // Nothing is injected, so the mode itself has nothing to protect.
+            // Which options redirect credentials is a property of the CLI, not of
+            // the mode, and lives in `targeting.locked_options`.
+            Self::Credentials => &[],
         }
     }
 }
