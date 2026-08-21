@@ -71,7 +71,7 @@ Flags capazes de trocar identidade ou endpoint, incluindo `--context`, `--kubeco
 
 ## Política read-only
 
-O `rules.yaml` do provider é compartilhado por padrão. Um `targets/<alias>/rules.yaml` existente substitui a política compartilhada somente naquele target.
+O `rules.yaml` do provider é compartilhado por padrão. Um `targets/<alias>/rules.yaml` existente soma seus denies aos compartilhados e substitui os accepts compartilhados somente naquele target — veja [camadas](../concepts/jasper.md#camadas-em-provider-target-aware).
 
 ```yaml
 deny:

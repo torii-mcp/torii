@@ -39,6 +39,8 @@ kubectl/mpce_dev
 kubectl/cliente_hml
 ```
 
+Na janela de uma chamada não resolvida, o humano escolhe entre permitir uma vez, permitir por um tempo e negar. Escolhendo um prefixo no editor de escopo, ele também pode tornar aquela fronteira permanente — gravando-a no `accept` ou no `deny` da política — mantendo o botão pressionado por cinco segundos. Essa é a única forma de a política mudar sem passar pelo `torii policy edit`, e ela nunca acontece sem gesto humano.
+
 O alias é identidade de configuração, auditoria e grants; o context real permanece sob controle humano. O conjunto de leases é exceção deliberada: fica no escopo do provider para substituir ou adicionar aliases de forma atômica.
 
 `aws_profile` usa o mesmo conceito de alias, mas o binding é profile local mais conta esperada. Esses valores permanecem no control plane; para o agente, `producao` é apenas o alias anunciado.

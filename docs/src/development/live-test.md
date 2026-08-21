@@ -169,8 +169,9 @@ Para providers target-aware, o gate identifica separadamente o `rules.yaml` comp
 | K8S-TGT-04 | envelope | bloqueio de `--kubeconfig` | R0 | nenhuma |
 | K8S-TGT-05 | envelope | bloqueio de `--server` | R0 | nenhuma |
 | K8S-TGT-06 | envelope | bloqueio de `--token` | R0 | nenhuma |
-| K8S-TGT-07 | política | regra do target substitui compartilhada | RK1 compartilhado + deny mínimo no target | nenhuma |
+| K8S-TGT-07 | política | camadas: deny compartilhado sobrevive, accept do target substitui | RK1 compartilhado + política mínima no target | nenhuma |
 | K8S-TGT-08 | isolamento | grant de um alias não atravessa outro | R0 em dois targets | Temporariamente, Exact, 2 min em A; Negar em B |
+| K8S-TGT-09 | política | decisão permanente pela janela grava o prefixo escolhido | R0 no target | Temporariamente, Prefixo, **Sempre permitir** por 5 s |
 
 ## Casos MCP
 
@@ -471,20 +472,33 @@ get pods --token=valor-ficticio
 
 Esperado: opção locked. O valor fictício não deve aparecer na auditoria, que deve permanecer inalterada.
 
-### K8S-TGT-07 — política do target substitui compartilhada
+### K8S-TGT-07 — camadas de política em target
 
-Compartilhado RK1. No target `lab`, usar:
+Compartilhado RK1, que aceita `get pods`. Acrescente um deny na política compartilhada:
 
 ```yaml
-version: "1.0"
+# providers/kubectl/rules.yaml
 deny:
+  - "delete"
+accept:
   - "get pods"
-accept: []
 ```
 
-Chamar `get pods -n default --request-timeout=10s`.
+No target `lab`, usar uma política que **não** repete o deny compartilhado:
 
-Esperado: deny explícito do target; a regra compartilhada não é combinada nem usada; nenhum subprocesso.
+```yaml
+# providers/kubectl/targets/lab/rules.yaml
+version: "1.0"
+deny: []
+accept:
+  - "get namespaces"
+```
+
+1. Chamar `delete pod nada --request-timeout=10s`.
+2. Chamar `get pods -n default --request-timeout=10s`.
+3. Chamar `get namespaces --request-timeout=10s`.
+
+Esperado: (1) deny explícito pela regra compartilhada, provando que o piso sobrevive à política do target; (2) não resolvido, com janela humana — o accept compartilhado não vale neste alias; (3) permitido pelo accept do target. Nenhum subprocesso em (1) e (2). Confirme com `torii policy show kubectl lab`, que deve imprimir os dois arquivos e o efetivo `deny: ['delete']` / `accept: ['get namespaces']`.
 
 ### K8S-TGT-08 — grant isolado por alias
 
@@ -496,6 +510,27 @@ Dois aliases, `lab_a` e `lab_b`, apontam para o mesmo context não produtivo apr
 4. Confirmar que a GUI aparece e clicar **Negar**.
 
 Esperado: grant existe somente sob `lab_a`; auditoria separa `kubectl/lab_a` e `kubectl/lab_b`.
+
+### K8S-TGT-09 — decisão permanente pela janela
+
+Target `lab` com política própria vazia (`deny: []`, `accept: []`) e um comentário
+qualquer no arquivo, para conferir a preservação.
+
+1. Chamar `get namespaces --request-timeout=10s`.
+2. Na janela, escolher **Temporariamente** e depois **Prefixo**.
+3. Mover a fronteira para 1 token e conferir que **Sempre permitir** fica
+   desabilitado quando `minimum_accept_tokens` do provider é maior que 1, com o
+   motivo no tooltip, e que **Sempre negar** permanece disponível.
+4. Voltar a fronteira para `get namespaces`, começar a segurar **Sempre permitir**
+   e soltar antes dos 5 s: nada acontece.
+5. Segurar **Sempre permitir** pelos 5 s completos.
+6. Repetir a mesma chamada.
+
+Esperado: a primeira chamada grava `get namespaces` no `accept` da política do
+target, audita `policy-accept-added` com a contagem de tokens (nunca a regra
+inteira) e executa; o comentário e a indentação do arquivo permanecem intactos; a
+repetição resolve por `allowed-by-rules`, sem janela e sem grant. Conferir com
+`torii policy show kubectl lab`, que deve mostrar as duas camadas e o efetivo.
 
 ## Evidência por instância
 

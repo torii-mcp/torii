@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     AccessChoice, ActiveTargetAuthorization, AuthPromptResult, AuthValidation, GrantSelection,
-    TargetAccessChoice,
+    PermanentPolicy, TargetAccessChoice,
 };
 use crate::error::{Error, Result};
 use crate::providers::AuthField;
@@ -25,6 +25,8 @@ enum PromptRequest {
         default_minutes: u32,
         /// Time left on the oldest grant still valid, offered as the first preset.
         align_seconds: Option<u32>,
+        /// What a permanent decision would write, and whether it can be written.
+        permanent: PermanentPolicy,
     },
     TargetAccess {
         provider: String,
@@ -55,12 +57,14 @@ pub async fn ask_access(
     args: &[String],
     default_minutes: u32,
     align_seconds: Option<u32>,
+    permanent: PermanentPolicy,
 ) -> Result<AccessChoice> {
     let request = PromptRequest::Access {
         provider: provider.into(),
         args: args.to_vec(),
         default_minutes,
         align_seconds,
+        permanent,
     };
     match invoke_child(request).await? {
         PromptResponse::Access(choice) => Ok(choice),
@@ -159,9 +163,10 @@ pub fn run_child() -> i32 {
             args,
             default_minutes,
             align_seconds,
+            permanent,
         }) => {
             let response = PromptResponse::Access(
-                access_window(provider, args, default_minutes, align_seconds)
+                access_window(provider, args, default_minutes, align_seconds, permanent)
                     .unwrap_or(AccessChoice::Deny),
             );
             if serde_json::to_writer(std::io::stdout(), &response).is_ok() {
@@ -278,6 +283,9 @@ const FREE_STROKE: egui::Color32 = egui::Color32::from_rgb(92, 99, 112);
 const FREE_TEXT: egui::Color32 = egui::Color32::from_rgb(198, 203, 211);
 const BOUNDARY_ACCENT: egui::Color32 = egui::Color32::from_rgb(229, 192, 123);
 const SCOPE_SUMMARY_BG: egui::Color32 = egui::Color32::from_rgb(45, 40, 28);
+const PERMANENT_ACCEPT_STROKE: egui::Color32 = egui::Color32::from_rgb(120, 174, 108);
+const PERMANENT_DENY_STROKE: egui::Color32 = egui::Color32::from_rgb(224, 108, 117);
+const PERMANENT_DENY_PROGRESS_BG: egui::Color32 = egui::Color32::from_rgb(112, 47, 51);
 
 /// `5 min`, `4 min 30 s` — for sentences.
 fn spelled_duration(seconds: u32) -> String {
@@ -413,6 +421,12 @@ fn token_detail_page(value: &str, page: usize) -> String {
 struct AccessApp {
     provider: String,
     args: Vec<String>,
+    /// What a permanent decision would write, decided by the server.
+    permanent: PermanentPolicy,
+    /// When the window opened, for the arming delay of the permanent buttons.
+    opened_at: Instant,
+    accept_hold: HoldState,
+    deny_hold: HoldState,
     hold: HoldState,
     timed: bool,
     prefix: bool,
@@ -440,11 +454,14 @@ impl eframe::App for AccessApp {
         self.sync_window_height(ctx);
         let decision = *self.outcome.borrow();
         if let Some(decision_since) = self.decision_since {
+            // A permanent decision names a file on the way out; the window stays up
+            // long enough for that sentence to be read.
+            let visible_for = decision.map_or(PROMPT_TERMINAL_VISIBLE_FOR, terminal_visible_for);
             let elapsed = decision_since.elapsed();
-            if elapsed >= PROMPT_TERMINAL_VISIBLE_FOR {
+            if elapsed >= visible_for {
                 close(ctx);
             } else {
-                ctx.request_repaint_after(PROMPT_TERMINAL_VISIBLE_FOR - elapsed);
+                ctx.request_repaint_after(visible_for - elapsed);
             }
         }
         let decided = decision.is_some();
@@ -482,6 +499,26 @@ impl eframe::App for AccessApp {
                                 .color(PROMPT_SUCCESS_COLOR),
                             );
                         }
+                        Some(AccessChoice::AllowAlways { prefix_len }) => {
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "👍 Gravando accept {} na {}.",
+                                    self.permanent_rule(prefix_len),
+                                    self.permanent.scope
+                                ))
+                                .color(PROMPT_SUCCESS_COLOR),
+                            );
+                        }
+                        Some(AccessChoice::DenyAlways { prefix_len }) => {
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "Negado. Gravando deny {} na {}.",
+                                    self.permanent_rule(prefix_len),
+                                    self.permanent.scope
+                                ))
+                                .color(PROMPT_ERROR_COLOR),
+                            );
+                        }
                         None if self.timed => {
                             ui.label(format!(
                                 "Segure o botão para permitir por {}.",
@@ -513,10 +550,12 @@ impl eframe::App for AccessApp {
                     } else {
                         "Segure para permitir uma vez".to_string()
                     };
+                    let slots = reserve_hold_paint(ui);
                     let response = ui
                         .add_enabled(
                             !decided,
                             egui::Button::new(&label)
+                                .fill(egui::Color32::TRANSPARENT)
                                 .min_size(egui::vec2(
                                     ALLOW_HOLD_BUTTON_WIDTH,
                                     ui.spacing().interact_size.y,
@@ -538,7 +577,7 @@ impl eframe::App for AccessApp {
                         focused,
                         Instant::now(),
                     );
-                    paint_hold_progress(ui, &response, &label, progress);
+                    paint_hold_bar(ui, &slots, &response, progress, HOLD_PROGRESS_BG);
                     if pressing {
                         ctx.request_repaint_after(Duration::from_millis(16));
                     }
@@ -594,7 +633,7 @@ impl eframe::App for AccessApp {
                 .id_salt("access_body")
                 .auto_shrink([false, false])
                 .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded)
-                .show(ui, |ui| self.render_body(ui, decided));
+                .show(ui, |ui| self.render_body(ui, ctx, decided));
             self.measured_height = Some(chrome + body.content_size.y);
         });
     }
@@ -602,7 +641,7 @@ impl eframe::App for AccessApp {
 
 impl AccessApp {
     /// What the call is, how it may be authorized, and for how long.
-    fn render_body(&mut self, ui: &mut egui::Ui, decided: bool) {
+    fn render_body(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, decided: bool) {
         ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
         ui.heading(format!("Torii — autorização ({})", self.provider));
         ui.label("A ação não está resolvida pela política.");
@@ -635,7 +674,7 @@ impl AccessApp {
         });
         let editing_prefix = self.timed && self.prefix && !decided;
         if editing_prefix {
-            ui.small("Os argumentos estão no editor de escopo temporário abaixo.");
+            ui.small("Os argumentos estão no editor de escopo abaixo.");
         } else {
             egui::ScrollArea::vertical()
                 .id_salt("access_arguments")
@@ -658,7 +697,7 @@ impl AccessApp {
             .radio_value(&mut self.timed, true, "Temporariamente")
             .changed();
         if once_changed || temporary_changed {
-            self.hold = HoldState::default();
+            self.reset_holds();
         }
         if temporary_changed {
             // The prefix option is the initial one when there is a structural
@@ -710,7 +749,7 @@ impl AccessApp {
                     }
                 }
                 if exact_changed || prefix_changed {
-                    self.hold = HoldState::default();
+                    self.reset_holds();
                 }
                 if self.prefix {
                     if let Some(suggested) = self.suggested_prefix_len {
@@ -726,7 +765,7 @@ impl AccessApp {
                                 ));
                                 if ui.button("Restaurar sugestão").clicked() {
                                     self.prefix_len = suggested;
-                                    self.hold = HoldState::default();
+                                    self.reset_holds();
                                 }
                             });
                         }
@@ -744,7 +783,7 @@ impl AccessApp {
                         .scroll_bar_visibility(
                             egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded,
                         )
-                        .show(ui, |ui| self.render_prefix_editor(ui));
+                        .show(ui, |ui| self.render_prefix_editor(ui, ctx, decided));
                     ui.horizontal(|ui| {
                         if ui
                             .add_enabled(
@@ -754,7 +793,7 @@ impl AccessApp {
                             .clicked()
                         {
                             self.prefix_len -= 1;
-                            self.hold = HoldState::default();
+                            self.reset_holds();
                         }
                         ui.label(format!(
                             "{} de {} argumentos fixos",
@@ -769,7 +808,7 @@ impl AccessApp {
                             .clicked()
                         {
                             self.prefix_len += 1;
-                            self.hold = HoldState::default();
+                            self.reset_holds();
                         }
                     });
                     let fixed_long = self
@@ -783,6 +822,17 @@ impl AccessApp {
                             "Argumentos longos: {fixed_long} dentro do prefixo e {free_long} fora dele."
                         ));
                     }
+                } else {
+                    // A permanent rule is a literal one, and a literal rule always
+                    // matches by prefix. There is no way to write "only this exact
+                    // invocation" as a rule, so the permanent buttons live with the
+                    // prefix and are not offered here.
+                    ui.small(
+                        egui::RichText::new(
+                            "Decisão permanente fica disponível ao escolher um prefixo: uma regra literal sempre casa por prefixo.",
+                        )
+                        .color(BOUNDARY_ACCENT),
+                    );
                 }
                 ui.small("Denies explícitos continuam prevalecendo.");
             });
@@ -796,7 +846,7 @@ impl AccessApp {
                     .changed()
                 {
                     self.seconds = minutes * 60;
-                    self.hold = HoldState::default();
+                    self.reset_holds();
                 }
                 ui.label("minutos");
                 if let Some(align) = self.align_seconds {
@@ -808,7 +858,7 @@ impl AccessApp {
                         .clicked()
                     {
                         self.seconds = align;
-                        self.hold = HoldState::default();
+                        self.reset_holds();
                     }
                 }
                 for preset in DURATION_PRESET_MINUTES {
@@ -818,7 +868,7 @@ impl AccessApp {
                         .clicked()
                     {
                         self.seconds = seconds;
-                        self.hold = HoldState::default();
+                        self.reset_holds();
                     }
                 }
             });
@@ -870,11 +920,168 @@ impl AccessApp {
         }
     }
 
-    fn finish_decision(&mut self, ctx: &egui::Context, decision: AccessChoice) {
+    /// Any change to what is being authorized discards every gesture in flight.
+    /// A hold that started at one prefix boundary must never confirm at another.
+    fn reset_holds(&mut self) {
         self.hold = HoldState::default();
+        self.accept_hold = HoldState::default();
+        self.deny_hold = HoldState::default();
+    }
+
+    fn finish_decision(&mut self, ctx: &egui::Context, decision: AccessChoice) {
+        self.reset_holds();
         *self.outcome.borrow_mut() = Some(decision);
         self.decision_since = Some(Instant::now());
-        ctx.request_repaint_after(PROMPT_TERMINAL_VISIBLE_FOR);
+        ctx.request_repaint_after(terminal_visible_for(decision));
+    }
+
+    /// One of the two permanent buttons in the corner of the fixed-prefix box.
+    ///
+    /// It acts on the boundary currently chosen in the editor beside it, is a
+    /// press-and-hold of five fixed seconds, stays inert for a moment after the
+    /// window opens, and is disabled outright when the server said this boundary
+    /// could not be written — with the reason on the tooltip instead of a failure
+    /// after the human already held it.
+    fn render_permanent_button(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &egui::Context,
+        kind: PermanentKind,
+        decided: bool,
+    ) {
+        let option = self.permanent.at(self.prefix_len).cloned();
+        let (label, blocked, available, rule) = match (&option, kind) {
+            (None, PermanentKind::Accept) => (
+                "Sempre permitir",
+                Some("esta fronteira não tem regra correspondente".to_string()),
+                false,
+                String::new(),
+            ),
+            (None, PermanentKind::Deny) => (
+                "Sempre negar",
+                Some("esta fronteira não tem regra correspondente".to_string()),
+                false,
+                String::new(),
+            ),
+            (Some(option), PermanentKind::Accept) => (
+                "Sempre permitir",
+                option.accept_blocked.clone(),
+                option.allows_accept(),
+                option.rule.clone(),
+            ),
+            (Some(option), PermanentKind::Deny) => (
+                "Sempre negar",
+                option.deny_blocked.clone(),
+                option.allows_deny(),
+                option.rule.clone(),
+            ),
+        };
+        let (stroke, progress_bg, vector) = match kind {
+            PermanentKind::Accept => (PERMANENT_ACCEPT_STROKE, HOLD_PROGRESS_BG, "accept"),
+            PermanentKind::Deny => (PERMANENT_DENY_STROKE, PERMANENT_DENY_PROGRESS_BG, "deny"),
+        };
+
+        let since_open = self.opened_at.elapsed();
+        let armed = since_open >= PERMANENT_ARMING_DELAY;
+        if !armed && !decided {
+            ctx.request_repaint_after(PERMANENT_ARMING_DELAY - since_open);
+        }
+        let enabled = available && armed && !decided;
+
+        let state = match kind {
+            PermanentKind::Accept => &mut self.accept_hold,
+            PermanentKind::Deny => &mut self.deny_hold,
+        };
+        let (pointer_down, focused) =
+            ctx.input(|input| (input.pointer.primary_down(), input.focused));
+        // The paint slots are reserved before the button so the progress bar goes
+        // under its label; the button carries no fill of its own.
+        let slots = reserve_hold_paint(ui);
+        let response = ui.add_enabled(
+            enabled,
+            egui::Button::new(egui::RichText::new(label).small())
+                .fill(egui::Color32::TRANSPARENT)
+                .min_size(egui::vec2(
+                    PERMANENT_BUTTON_WIDTH,
+                    ui.spacing().interact_size.y,
+                ))
+                .stroke(egui::Stroke::new(1.0_f32, stroke))
+                .sense(egui::Sense::click_and_drag()),
+        );
+        let pressing =
+            enabled && response.is_pointer_button_down_on() && response.contains_pointer();
+        let (progress, confirmed) = hold_update_for(
+            state,
+            pressing,
+            pointer_down,
+            focused,
+            Instant::now(),
+            PERMANENT_HOLD_DURATION,
+        );
+        paint_hold_bar(ui, &slots, &response, progress, progress_bg);
+        if pressing {
+            ctx.request_repaint_after(Duration::from_millis(16));
+        }
+        let hover = match &blocked {
+            Some(reason) => format!("Indisponível nesta fronteira: {reason}"),
+            None if !armed => "Disponível em um instante: um botão permanente não aceita um clique que já estava em curso quando a janela abriu.".to_string(),
+            None => format!(
+                "Acrescenta a regra {rule:?} ao vetor `{vector}` da {}. Vale até alguém editar a política; nenhum grant temporário é criado.{}",
+                self.permanent.scope,
+                if kind == PermanentKind::Accept {
+                    " Uma regra literal casa por prefixo: os argumentos depois da fronteira ficam livres."
+                } else {
+                    " Denies explícitos prevalecem sobre accept, grant e aprovação humana."
+                }
+            ),
+        };
+        response.on_hover_text(hover);
+        if confirmed {
+            self.finish_decision(
+                ctx,
+                match kind {
+                    PermanentKind::Accept => AccessChoice::AllowAlways {
+                        prefix_len: self.prefix_len,
+                    },
+                    PermanentKind::Deny => AccessChoice::DenyAlways {
+                        prefix_len: self.prefix_len,
+                    },
+                },
+            );
+        }
+    }
+
+    /// The rule of a boundary, quoted, for the terminal status line.
+    fn permanent_rule(&self, prefix_len: usize) -> String {
+        self.permanent.at(prefix_len).map_or_else(
+            || "a regra".to_string(),
+            |option| format!("{:?}", option.rule),
+        )
+    }
+
+    /// The line inside the fixed-prefix box that says, in words, what a permanent
+    /// decision at this boundary writes and where — or why it cannot be written.
+    fn render_permanent_footer(&mut self, ui: &mut egui::Ui) {
+        let Some(option) = self.permanent.at(self.prefix_len) else {
+            return;
+        };
+        if let Some(reason) = option.shared_block() {
+            ui.small(
+                egui::RichText::new(format!("Decisão permanente indisponível: {reason}"))
+                    .color(BOUNDARY_ACCENT),
+            );
+            return;
+        }
+        ui.small(format!(
+            "Permanente grava {:?} na {}.",
+            option.rule, self.permanent.scope
+        ));
+        for reason in [&option.accept_blocked, &option.deny_blocked]
+            .into_iter()
+            .flatten()
+        {
+            ui.small(egui::RichText::new(reason.clone()).color(BOUNDARY_ACCENT));
+        }
     }
 
     fn render_argument_strip(&mut self, ui: &mut egui::Ui) {
@@ -892,19 +1099,28 @@ impl AccessApp {
         });
     }
 
-    fn render_prefix_editor(&mut self, ui: &mut egui::Ui) {
+    fn render_prefix_editor(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, decided: bool) {
         let fixed_frame = egui::Frame::group(ui.style())
             .fill(FIXED_GROUP_BG)
             .stroke(egui::Stroke::new(1.0_f32, FIXED_STROKE))
             .inner_margin(egui::Margin::same(8.0));
         fixed_frame.show(ui, |ui| {
             ui.set_min_width(ui.available_width());
-            ui.label(
-                egui::RichText::new(format!("PERMANECEM IGUAIS · {}", self.prefix_len))
-                    .small()
-                    .strong()
-                    .color(FIXED_STROKE),
-            );
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new(format!("PERMANECEM IGUAIS · {}", self.prefix_len))
+                        .small()
+                        .strong()
+                        .color(FIXED_STROKE),
+                );
+                // The permanent buttons live here, in the corner of the box that
+                // shows the tokens the rule is made of: the boundary is tuned
+                // first, and only then made permanent.
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    self.render_permanent_button(ui, ctx, PermanentKind::Deny, decided);
+                    self.render_permanent_button(ui, ctx, PermanentKind::Accept, decided);
+                });
+            });
             ui.horizontal_wrapped(|ui| {
                 for index in 0..self.prefix_len {
                     self.render_token(
@@ -917,6 +1133,7 @@ impl AccessApp {
                     );
                 }
             });
+            self.render_permanent_footer(ui);
         });
 
         ui.add_space(6.0);
@@ -996,7 +1213,7 @@ impl AccessApp {
         });
         if selectable && response.clicked() {
             self.prefix_len = index + 1;
-            self.hold = HoldState::default();
+            self.reset_holds();
         }
     }
 
@@ -1094,6 +1311,7 @@ fn access_window(
     args: Vec<String>,
     default_minutes: u32,
     align_seconds: Option<u32>,
+    permanent: PermanentPolicy,
 ) -> std::result::Result<AccessChoice, String> {
     let suggested_prefix_len = suggested_prefix_len(&args);
     let arg_char_counts = args
@@ -1115,6 +1333,10 @@ fn access_window(
                 provider,
                 prefix_len: args.len().max(1),
                 args,
+                permanent,
+                opened_at: Instant::now(),
+                accept_hold: HoldState::default(),
+                deny_hold: HoldState::default(),
                 hold: HoldState::default(),
                 timed: false,
                 prefix: false,
@@ -1145,11 +1367,27 @@ const TARGET_ACCESS_ACTIVE_ROW_HEIGHT: f32 = 30.0;
 const TARGET_ACCESS_WARNING_HEIGHT: f32 = 82.0;
 const TARGET_ACCESS_ACTIONS_HEIGHT: f32 = 38.0;
 const HOLD_DURATION: Duration = Duration::from_secs(1);
+/// A permanent policy decision is held far longer than a one-off approval, on
+/// purpose: the seconds exist so the human can ask "is this really something I
+/// want in the policy forever?" while the bar fills.
+const PERMANENT_HOLD_DURATION: Duration = Duration::from_secs(5);
+/// The permanent buttons stay inert for a moment after the window appears. A
+/// prompt is raised by an agent's call and can land under a click already on its
+/// way; the least reversible action in the window does not accept that click.
+const PERMANENT_ARMING_DELAY: Duration = Duration::from_millis(1500);
+const PERMANENT_BUTTON_WIDTH: f32 = 178.0;
 const TARGET_ADD_BUTTON_WIDTH: f32 = 214.0;
 const ALLOW_HOLD_BUTTON_WIDTH: f32 = 232.0;
 const TARGET_WARNING_BG: egui::Color32 = egui::Color32::from_rgb(63, 31, 31);
 const TARGET_WARNING_STROKE: egui::Color32 = egui::Color32::from_rgb(224, 108, 117);
 const HOLD_PROGRESS_BG: egui::Color32 = egui::Color32::from_rgb(77, 105, 58);
+
+/// Which of the two permanent buttons is being rendered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PermanentKind {
+    Accept,
+    Deny,
+}
 
 #[derive(Default)]
 struct HoldState {
@@ -1245,10 +1483,12 @@ impl eframe::App for TargetAccessApp {
                     if !no_active {
                         if add_creates_multiple {
                             let label = "Segure para adicionar";
+                            let slots = reserve_hold_paint(ui);
                             let response = ui
                                 .add_enabled(
                                     !decided,
                                     egui::Button::new(label)
+                                        .fill(egui::Color32::TRANSPARENT)
                                         .min_size(egui::vec2(
                                             TARGET_ADD_BUTTON_WIDTH,
                                             ui.spacing().interact_size.y,
@@ -1270,7 +1510,7 @@ impl eframe::App for TargetAccessApp {
                                 focused,
                                 Instant::now(),
                             );
-                            paint_hold_progress(ui, &response, label, progress);
+                            paint_hold_bar(ui, &slots, &response, progress, HOLD_PROGRESS_BG);
                             if pressing {
                                 ctx.request_repaint_after(Duration::from_millis(16));
                             }
@@ -1508,6 +1748,26 @@ fn hold_update(
     focused: bool,
     now: Instant,
 ) -> (f32, bool) {
+    hold_update_for(
+        state,
+        pressing_button,
+        pointer_down,
+        focused,
+        now,
+        HOLD_DURATION,
+    )
+}
+
+/// The same gesture with an explicit duration. A permanent policy decision uses a
+/// deliberately long hold: the seconds are the deliberation, not a formality.
+fn hold_update_for(
+    state: &mut HoldState,
+    pressing_button: bool,
+    pointer_down: bool,
+    focused: bool,
+    now: Instant,
+    duration: Duration,
+) -> (f32, bool) {
     let lost_focus = state.was_focused && !focused;
     state.was_focused = focused;
     if lost_focus && state.started_at.is_some() {
@@ -1531,7 +1791,7 @@ fn hold_update(
     }
     let started_at = *state.started_at.get_or_insert(now);
     let progress = (now.saturating_duration_since(started_at).as_secs_f32()
-        / HOLD_DURATION.as_secs_f32())
+        / duration.as_secs_f32())
     .clamp(0.0, 1.0);
     if progress >= 1.0 {
         state.started_at = None;
@@ -1542,25 +1802,62 @@ fn hold_update(
     }
 }
 
-fn paint_hold_progress(ui: &egui::Ui, response: &egui::Response, label: &str, progress: f32) {
+/// Paint slots reserved before a hold button is added, so the progress bar lands
+/// *under* the label the button draws itself. Painting it afterwards would cover
+/// the label and force a second rendering of the same text on top — which reads
+/// as two labels stacked and tints the one underneath.
+struct HoldPaint {
+    background: egui::layers::ShapeIdx,
+    bar: egui::layers::ShapeIdx,
+}
+
+/// Reserve the two slots. Must be called before the button is added: shapes are
+/// drawn in the order they enter the layer, and `set` fills a slot in place
+/// without moving it.
+fn reserve_hold_paint(ui: &egui::Ui) -> HoldPaint {
+    HoldPaint {
+        background: ui.painter().add(egui::Shape::Noop),
+        bar: ui.painter().add(egui::Shape::Noop),
+    }
+}
+
+/// A hold button is added with no fill of its own, so these two slots are its
+/// whole background: the normal widget fill, then the progress bar over it. The
+/// label egui rendered is never touched.
+fn paint_hold_bar(
+    ui: &egui::Ui,
+    slots: &HoldPaint,
+    response: &egui::Response,
+    progress: f32,
+    fill_color: egui::Color32,
+) {
+    let visuals = ui.style().interact(response);
+    ui.painter().set(
+        slots.background,
+        egui::epaint::RectShape::filled(response.rect, visuals.rounding, visuals.weak_bg_fill),
+    );
     if progress <= 0.0 {
         return;
     }
     let track = response.rect.shrink(2.0);
-    let fill = egui::Rect::from_min_max(
+    let bar = egui::Rect::from_min_max(
         track.min,
         egui::pos2(track.left() + track.width() * progress, track.bottom()),
     );
-    let visuals = ui.style().interact(response);
-    let painter = ui.painter().with_clip_rect(track);
-    painter.rect_filled(fill, visuals.rounding, HOLD_PROGRESS_BG);
-    painter.text(
-        response.rect.center(),
-        egui::Align2::CENTER_CENTER,
-        label,
-        egui::TextStyle::Button.resolve(ui.style()),
-        visuals.text_color(),
+    ui.painter().set(
+        slots.bar,
+        egui::epaint::RectShape::filled(bar, egui::Rounding::ZERO, fill_color),
     );
+}
+
+/// How long the window lingers after a decision, so the human reads what it did.
+fn terminal_visible_for(decision: AccessChoice) -> Duration {
+    match decision {
+        AccessChoice::AllowAlways { .. } | AccessChoice::DenyAlways { .. } => {
+            PERMANENT_TERMINAL_VISIBLE_FOR
+        }
+        _ => PROMPT_TERMINAL_VISIBLE_FOR,
+    }
 }
 
 fn epoch_seconds() -> u64 {
@@ -1629,6 +1926,7 @@ const PROMPT_STATUS_BAR_HEIGHT: f32 = 24.0;
 const PROMPT_ERROR_COLOR: egui::Color32 = egui::Color32::from_rgb(224, 108, 117);
 const PROMPT_SUCCESS_COLOR: egui::Color32 = egui::Color32::from_rgb(152, 195, 121);
 const PROMPT_TERMINAL_VISIBLE_FOR: Duration = Duration::from_millis(650);
+const PERMANENT_TERMINAL_VISIBLE_FOR: Duration = Duration::from_millis(2200);
 
 impl eframe::App for AuthApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
@@ -1911,10 +2209,15 @@ mod tests {
             .enumerate()
             .filter_map(|(index, count)| (*count > TOKEN_COMPACT_CHARS).then_some(index))
             .collect::<Vec<_>>();
+        let args_len = args.len();
         AccessApp {
             provider: "aws".into(),
-            prefix_len: args.len().max(1),
+            prefix_len: args_len.max(1),
             args,
+            permanent: PermanentPolicy::blocked("test scope", "test", args_len),
+            opened_at: Instant::now(),
+            accept_hold: HoldState::default(),
+            deny_hold: HoldState::default(),
             hold: HoldState::default(),
             timed: true,
             prefix: false,
@@ -1953,7 +2256,7 @@ mod tests {
                     let body = egui::ScrollArea::vertical()
                         .id_salt("access_body")
                         .auto_shrink([false, false])
-                        .show(ui, |ui| app.render_body(ui, false));
+                        .show(ui, |ui| app.render_body(ui, ctx, false));
                     measured = body.content_size.y;
                 });
             });
@@ -2227,6 +2530,133 @@ mod tests {
             ),
             (0.0, false)
         );
+    }
+
+    /// Os cinco segundos do botão permanente são o ponto do botão: ele não pode
+    /// confirmar no tempo do gesto curto de "permitir uma vez".
+    #[test]
+    fn the_permanent_hold_takes_its_full_five_seconds() {
+        let now = Instant::now();
+        let mut state = HoldState::default();
+
+        hold_update_for(&mut state, true, true, true, now, PERMANENT_HOLD_DURATION);
+        assert!(
+            !hold_update_for(
+                &mut state,
+                true,
+                true,
+                true,
+                now + HOLD_DURATION,
+                PERMANENT_HOLD_DURATION,
+            )
+            .1,
+            "um segundo não pode confirmar uma decisão permanente"
+        );
+        let (progress, confirmed) = hold_update_for(
+            &mut state,
+            true,
+            true,
+            true,
+            now + PERMANENT_HOLD_DURATION - Duration::from_millis(1),
+            PERMANENT_HOLD_DURATION,
+        );
+        assert!(!confirmed);
+        assert!(progress > 0.99, "{progress}");
+        assert_eq!(
+            hold_update_for(
+                &mut state,
+                true,
+                true,
+                true,
+                now + PERMANENT_HOLD_DURATION,
+                PERMANENT_HOLD_DURATION,
+            ),
+            (1.0, true)
+        );
+    }
+
+    /// Soltar no meio do caminho descarta o progresso, e voltar a pressionar sem
+    /// soltar o botão do mouse não recomeça a contagem.
+    #[test]
+    fn the_permanent_hold_restarts_from_zero_after_a_release() {
+        let now = Instant::now();
+        let mut state = HoldState::default();
+
+        hold_update_for(&mut state, true, true, true, now, PERMANENT_HOLD_DURATION);
+        assert_eq!(
+            hold_update_for(
+                &mut state,
+                false,
+                true,
+                true,
+                now + Duration::from_secs(4),
+                PERMANENT_HOLD_DURATION,
+            ),
+            (0.0, false)
+        );
+        assert_eq!(
+            hold_update_for(
+                &mut state,
+                true,
+                true,
+                true,
+                now + Duration::from_secs(9),
+                PERMANENT_HOLD_DURATION,
+            ),
+            (0.0, false),
+            "o ponteiro nunca foi solto: a contagem não recomeça"
+        );
+        hold_update_for(
+            &mut state,
+            false,
+            false,
+            true,
+            now + Duration::from_secs(10),
+            PERMANENT_HOLD_DURATION,
+        );
+        let (progress, confirmed) = hold_update_for(
+            &mut state,
+            true,
+            true,
+            true,
+            now + Duration::from_secs(11),
+            PERMANENT_HOLD_DURATION,
+        );
+        assert_eq!((progress, confirmed), (0.0, false));
+    }
+
+    #[test]
+    fn a_permanent_decision_stays_visible_longer_than_a_one_off() {
+        assert!(
+            terminal_visible_for(AccessChoice::AllowAlways { prefix_len: 1 })
+                > terminal_visible_for(AccessChoice::AllowOnce)
+        );
+        assert_eq!(
+            terminal_visible_for(AccessChoice::DenyAlways { prefix_len: 1 }),
+            PERMANENT_TERMINAL_VISIBLE_FOR
+        );
+    }
+
+    #[test]
+    fn a_blocked_permanent_policy_offers_neither_button() {
+        let blocked = PermanentPolicy::blocked("escopo", "motivo", 3);
+        for prefix_len in 1..=3 {
+            let option = blocked.at(prefix_len).unwrap();
+            assert!(!option.allows_accept());
+            assert!(!option.allows_deny());
+            assert_eq!(option.shared_block(), Some("motivo"));
+        }
+        // Uma fronteira fora do vetor não oferece nada, em vez de entrar em pânico.
+        assert!(blocked.at(0).is_none());
+        assert!(blocked.at(4).is_none());
+        // Uma regra vazia nunca é oferecida, mesmo sem motivo registrado.
+        let empty = crate::control::PermanentOption {
+            rule: String::new(),
+            accept_blocked: None,
+            deny_blocked: None,
+        };
+        assert!(!empty.allows_accept());
+        assert!(!empty.allows_deny());
     }
 
     #[test]

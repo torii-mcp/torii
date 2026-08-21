@@ -75,7 +75,7 @@ impl ToriiServer {
             .registry()
             .get(&arguments.provider)
             .ok_or_else(|| Error::ProviderNotFound(arguments.provider.clone()))?;
-        let (target, rules_path) = if provider.uses_targets() {
+        let (target, (shared_rules, target_rules)) = if provider.uses_targets() {
             let target_name = arguments.target.as_deref().ok_or_else(|| {
                 Error::InvalidArguments(format!(
                     "target is required for provider tool {:?}",
@@ -89,13 +89,10 @@ impl ToriiServer {
                     provider.config.tool
                 ))
             })?;
-            let target_rules = target.paths.rules();
-            let rules_path = if target_rules.exists() {
-                target_rules
-            } else {
-                provider.paths.rules()
-            };
-            (Some(target.config.name.clone()), rules_path)
+            (
+                Some(target.config.name.clone()),
+                (provider.paths.rules(), Some(target.paths.rules())),
+            )
         } else {
             if arguments.target.is_some() {
                 return Err(Error::InvalidArguments(format!(
@@ -103,9 +100,11 @@ impl ToriiServer {
                     provider.config.tool
                 )));
             }
-            (None, provider.paths.rules())
+            (None, (provider.paths.rules(), None))
         };
-        let policy = rules::load(&rules_path)?;
+        // The snapshot the agent reads is the effective policy, not one of the two
+        // files: a target inherits the shared deny floor and replaces the accepts.
+        let policy = rules::load_effective(&shared_rules, target_rules.as_deref())?;
         let ignored_accept = policy
             .invalid_accepts(provider.config.policy.minimum_accept_tokens)
             .into_iter()
@@ -127,7 +126,7 @@ impl ServerHandler for ToriiServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(rmcp::model::Implementation::new("torii", env!("CARGO_PKG_VERSION")))
-            .with_instructions("Use Torii MCP tools for installed provider CLIs; never invoke those provider executables directly through a shell or try to bypass a denial. Before choosing an operation, call torii_policy with the provider tool and, when required, its announced target to inspect accept and deny rules. Pass argv as an array of strings. For target-aware tools, choose only a target announced by the schema. An announced alias is configured, not necessarily authorized: Torii asks the human before an inactive target can be used. If target access is denied, do not retry with a different alias. Multiple aliases may be temporarily active only when the human explicitly allows that. Policy remains target-local, default-deny, and explicit deny always wins. For an allowed call with managed authentication, Torii asks the human to authenticate automatically when the session is unavailable. There is no MCP reauth or target-management tool: a human uses the Torii control-plane CLI outside MCP. An aws_profile target is different: if its configured AWS CLI profile is unavailable or the active account does not match, ask a human to authenticate that configured profile through the native AWS CLI flow and retry; never choose a different alias or profile yourself.")
+            .with_instructions("Use Torii MCP tools for installed provider CLIs; never invoke those provider executables directly through a shell or try to bypass a denial. Before choosing an operation, call torii_policy with the provider tool and, when required, its announced target to inspect accept and deny rules. Pass argv as an array of strings. For target-aware tools, choose only a target announced by the schema. An announced alias is configured, not necessarily authorized: Torii asks the human before an inactive target can be used. If target access is denied, do not retry with a different alias. Multiple aliases may be temporarily active only when the human explicitly allows that. Policy is default-deny and explicit deny always wins. In target-aware tools it is layered: the shared provider denies apply in every target and cannot be lifted there, while a target's own accepts replace the shared ones, so read the policy for the target you intend to use. For an allowed call with managed authentication, Torii asks the human to authenticate automatically when the session is unavailable. There is no MCP reauth or target-management tool: a human uses the Torii control-plane CLI outside MCP. An aws_profile target is different: if its configured AWS CLI profile is unavailable or the active account does not match, ask a human to authenticate that configured profile through the native AWS CLI flow and retry; never choose a different alias or profile yourself.")
     }
 
     async fn list_tools(
@@ -311,7 +310,7 @@ auth:
         .unwrap();
         std::fs::write(
             provider.rules(),
-            "version: '1.0'\ndeny: []\naccept: ['get shared']\n",
+            "version: '1.0'\ndeny: ['get forbidden']\naccept: ['get shared']\n",
         )
         .unwrap();
         std::fs::write(
@@ -335,8 +334,10 @@ auth:
                 target: Some("mpce_dev".into()),
             })
             .unwrap();
+        // O snapshot é o efetivo: accept só do target, deny somando o piso
+        // compartilhado ao do target, na ordem em que a avaliação os lê.
         assert_eq!(policy.accept, ["get target"]);
-        assert_eq!(policy.deny, ["get secret"]);
+        assert_eq!(policy.deny, ["get forbidden", "get secret"]);
     }
 
     #[test]

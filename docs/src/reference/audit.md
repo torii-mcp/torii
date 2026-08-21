@@ -23,6 +23,7 @@ Providers simples usam seu nome como escopo. Providers target-aware usam `provid
 - `allowed-by-rules` e `allowed-by-grant`;
 - `denied-explicit` e `denied-interface`;
 - `override-once` e `override-timed`;
+- `policy-accept-added`, `policy-deny-added` e `policy-write-failed`, com a largura da regra e qual das duas políticas recebeu a escrita como detalhe — nunca a regra inteira;
 - `invalid-accept`;
 - `session-ok`, `session-unchecked`, `session-invalid`, `session-refreshed` e `session-candidate-invalid`;
 - `preflight-provider`, `preflight-ok` e `preflight-failed`;

@@ -111,7 +111,7 @@ policy:
   minimum_accept_tokens: 2
 ```
 
-`minimum_accept_tokens` vale somente para `accept` em `rules.yaml`. O escopo de um grant temporário é escolhido pelo operador na janela de autorização como invocação exata ou prefixo de tokens; não é derivado automaticamente pelo provider. Em providers target-aware, `targets/<name>/rules.yaml` substitui o `rules.yaml` compartilhado quando existe. Um grant só é consultado depois de o alias possuir lease válido; ele não ativa target algum.
+`minimum_accept_tokens` vale somente para `accept` em `rules.yaml`. O escopo de um grant temporário é escolhido pelo operador na janela de autorização como invocação exata ou prefixo de tokens; não é derivado automaticamente pelo provider. Em providers target-aware, `targets/<name>/rules.yaml` compõe com o `rules.yaml` compartilhado quando existe: denies somam, accepts do target substituem os compartilhados. Um grant só é consultado depois de o alias possuir lease válido; ele não ativa target algum.
 
 ### `forbidden_args`
 

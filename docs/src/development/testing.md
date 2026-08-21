@@ -36,6 +36,7 @@ Toda mudança no fluxo deve preservar testes para:
 - digest de binding invalidando lease após editar, remover ou recriar um alias;
 - `target clear` preservando grants, `.env`, cache, credenciais, `target.yaml` e processos já iniciados;
 - múltiplos aliases ativos permanecendo no schema; na janela, o alerta ocupa a largura disponível junto às ações e **Adicionar** só conclui depois de 1 segundo de pressão contínua, reiniciando ao soltar; o clique que traz uma janela sem foco para frente já inicia a contagem;
+- decisão permanente pela janela: regra construída do argv normalizado de cada fronteira, fronteira que não produziria o veredicto pretendido com o botão desabilitado, inserção preservando comentários e fim de linha, releitura do disco antes de gravar e headless nunca escrevendo política;
 - limite combinado de saída;
 - tools/list contendo uma tool por provider e nenhuma tool de controle.
 - pacote recusando rules base não vazio, setup recusando overwrite e upgrade preservando rules/estado.

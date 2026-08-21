@@ -97,11 +97,11 @@ Todo pacote instala `rules.yaml` **vazio**: nada atravessa até você escrever a
 torii policy show aws              # imprime a política ativa e seu caminho
 torii policy edit aws             # abre no $EDITOR, valida antes de aplicar
 torii policy edit kubectl dev     # política só daquele alias
-torii policy edit kubectl dev --create   # cria a política do alias, que substitui a compartilhada
+torii policy edit kubectl dev --create   # cria a política do alias: soma denies, substitui accepts
 ```
 
-O arquivo é `providers/<provider>/rules.yaml`; um `targets/<alias>/rules.yaml` substitui a
-política compartilhada naquele alias. `policy edit` edita uma cópia: YAML malformado ou regex
+O arquivo é `providers/<provider>/rules.yaml`; um `targets/<alias>/rules.yaml` soma denies ao
+piso compartilhado e substitui os accepts compartilhados naquele alias. `policy edit` edita uma cópia: YAML malformado ou regex
 inválido nunca chega ao arquivo vivo, e o rascunho recusado é preservado.
 
 ```yaml
@@ -207,6 +207,8 @@ epoch | escopo | evento | regra-curta | detalhe
 | `allowed-by-rules` / `allowed-by-grant` | passou por accept ou por grant vivo |
 | `denied-explicit` | casou um `deny`; nada mais foi consultado |
 | `override-once` / `override-timed` | humano aprovou na janela, uma vez ou por tempo |
+| `policy-accept-added` / `policy-deny-added` | humano gravou regra permanente pela janela |
+| `policy-write-failed` | gesto permanente não chegou ao disco; a chamada seguiu só o gesto |
 | `target-access-*` | pedido, substituição, adição, revogação ou perda de lease |
 | `identity-mismatch` | conta ativa diferente da esperada; comando não executou |
 | `session-*` | estado da sessão do escopo de credencial |
@@ -218,7 +220,7 @@ não ledger de compliance. Ver [Auditoria](../reference/audit.md).
 
 | Mudança | Reiniciar? |
 |---|---|
-| editar `rules.yaml` | não |
+| editar `rules.yaml` | não; só o humano, pelo `policy edit` ou pelos botões permanentes da janela |
 | ativar, limpar ou expirar lease | não |
 | conceder grant temporário | não |
 | instalar, atualizar ou remover provider | sim |

@@ -44,7 +44,7 @@ Cada `target.yaml` associa o alias a um context e indica o provider cujo lifecyc
 
 O alias começa inativo. Antes de grants Jasper, ambiente ou autenticação, o dispatcher exige um lease humano válido, armazenado no escopo do provider e vinculado por digest ao binding atual. A ativação normal substitui os aliases ativos da tool; adicionar outro é uma escolha humana explícita, pois deixa o agente escolher qualquer alias ativo nas operações permitidas.
 
-O provider alvo compartilha executável e política por padrão. Cada target isola grants e pode substituir regras e variáveis persistentes localmente. Em `kubectl_context`, cache, credenciais e lock de autenticação pertencem ao provider indicado pelo campo `provider`.
+O provider alvo compartilha executável e política por padrão. Cada target isola grants e pode, localmente, somar denies aos compartilhados, substituir os accepts compartilhados e sobrepor variáveis persistentes. Em `kubectl_context`, cache, credenciais e lock de autenticação pertencem ao provider indicado pelo campo `provider`.
 
 `aws_profile` é o segundo modo concreto. A tool recebe um alias como `producao`; o alias fixa um profile local e uma conta AWS esperada, que não aparecem no schema MCP. O executor bloqueia opções de troca de profile, região e endpoint, aplica o binding somente ao filho e compara a conta STS antes de executar. Nesse modo, cache e lock pertencem ao próprio target, para que aliases de contas diferentes não compartilhem sessão.
 

@@ -18,7 +18,9 @@ O Torii reduz a superfície de execução disponível ao agente. Ele não transf
 12. **Grant tokenizado.** A invocação exata compara todos os tokens e seu tamanho; um grant de prefixo compara somente o prefixo explicitamente escolhido pelo operador. Nenhum grant é reconstruído como linha de shell.
 13. **Consulta de política somente leitura.** `torii_policy` pode ler as regras ativas de um provider ou target, mas não lê ambiente, credenciais, cache ou grants e não altera estado.
 14. **Binding AWS humano.** Um target `aws_profile` fixa profile, região opcional e conta esperada fora do MCP; o Torii remove overrides herdados, bloqueia overrides do agente e confirma a conta por STS antes de cada execução permitida.
-15. **Lease humano de target.** Um alias target-aware é configurado, mas começa inativo. Depois de avaliar o deny explícito — que encerra a chamada se compatível — e antes de grants, ambiente, sessão ou execução, o dispatcher exige um lease humano ainda válido para aquele binding.
+15. **Piso compartilhado de deny.** Em provider target-aware, os denies do `rules.yaml` compartilhado valem em todos os targets e não podem ser removidos pela política de um target; criar a política de um target nunca é caminho para sair de um deny da raiz. Accepts são o contrário: a política do target substitui os accepts compartilhados naquele alias.
+16. **Decisão permanente é gesto humano validado.** Uma regra só é acrescentada à política pela janela depois de um gesto humano de cinco segundos, e somente se a política resultante, compilada e avaliada sobre o argv daquele prefixo, produzir o veredicto pretendido. A janela devolve a fronteira, nunca a regra; o servidor a reconstrói, relê a política do disco e substitui o arquivo atomicamente. O agente não tem tool que edite política e nenhuma escrita acontece em headless.
+17. **Lease humano de target.** Um alias target-aware é configurado, mas começa inativo. Depois de avaliar o deny explícito — que encerra a chamada se compatível — e antes de grants, ambiente, sessão ou execução, o dispatcher exige um lease humano ainda válido para aquele binding.
 
 ## Ordem crítica
 
@@ -27,9 +29,9 @@ validar envelope MCP
         |
 resolver provider/target e bloquear overrides
         |
-carregar rules.yaml
+carregar rules.yaml compartilhado e, em target, compor com o do alias
         |
-deny explícito
+deny explícito (compartilhado ou do target)
         |
 lease humano do target, quando aplicável
         |

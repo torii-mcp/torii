@@ -1,5 +1,4 @@
 use serde::Serialize;
-use std::path::Path;
 
 use crate::audit;
 use crate::config::{env_file, ConfigPaths, Settings};
@@ -8,7 +7,9 @@ use crate::error::{Error, Result};
 use crate::jasper::grants;
 use crate::jasper::rules::{self, Evaluation};
 use crate::jasper::{DecisionResult, PolicyDecision};
+use crate::policy;
 use crate::providers::auth::session;
+use crate::providers::config::IgnoreArgs;
 use crate::providers::{AuthStrategy, Provider, ProviderRegistry, TargetMode};
 use crate::runtime::exec::{self, ExecutionResult};
 use crate::target_access::{self, ActivationMode, ActivationOutcome, GuardedActivation};
@@ -33,7 +34,11 @@ pub struct Invoker {
 struct InvocationScope {
     target: Option<String>,
     audit_scope: String,
+    /// The shared provider policy: it always applies and carries the deny floor.
     rules: std::path::PathBuf,
+    /// The target's own policy, when the provider uses targets. Layered over the
+    /// shared one: it adds denies and replaces accepts.
+    target_rules: Option<std::path::PathBuf>,
     grants: std::path::PathBuf,
     /// Extra argv appended to the invoked command (e.g. `--context`, `--profile`).
     target_args: Vec<String>,
@@ -158,7 +163,7 @@ impl Invoker {
             .join(" ");
         audit::log(&self.paths, &scope.audit_scope, "invoke", &audit_rule, "");
 
-        let policy = rules::load(&scope.rules)?;
+        let policy = rules::load_effective(&scope.rules, scope.target_rules.as_deref())?;
 
         // Forbidden arguments close channels the policy cannot inspect (a query
         // supplied via file or stdin). Rejected in any position, before any rule
@@ -242,8 +247,15 @@ impl Invoker {
                 }
             }
             Evaluation::Unresolved => {
-                self.resolve_unresolved(&scope.audit_scope, &scope.grants, args, &audit_rule)
-                    .await?
+                self.resolve_unresolved(
+                    &provider.config.policy.ignore_args,
+                    &scope,
+                    &policy,
+                    args,
+                    min_tokens,
+                    &audit_rule,
+                )
+                .await?
             }
             Evaluation::DeniedExplicit { .. } => unreachable!("explicit deny returned above"),
         };
@@ -558,11 +570,15 @@ impl Invoker {
 
     async fn resolve_unresolved(
         &self,
-        audit_scope: &str,
-        grants_path: &Path,
+        ignore: &IgnoreArgs,
+        scope: &InvocationScope,
+        policy: &rules::Rules,
         args: &[String],
+        minimum: usize,
         audit_rule: &str,
     ) -> Result<PolicyDecision> {
+        let audit_scope = &scope.audit_scope;
+        let grants_path = &scope.grants;
         let now = audit::now_epoch();
         let loaded = grants::load_active(grants_path, now);
         if loaded.legacy_ignored {
@@ -597,11 +613,13 @@ impl Invoker {
         let align_seconds = grants::oldest_active_expiry(&loaded.active)
             .map(|expiry| u32::try_from(expiry.saturating_sub(now)).unwrap_or(u32::MAX))
             .filter(|remaining| *remaining > 0);
+        let permanent = permanent_options(ignore, scope, policy, args, minimum);
         let choice = control::ask_access(
             audit_scope,
             args,
             self.settings.default_grant_minutes,
             align_seconds,
+            permanent,
         )
         .await?;
         match choice {
@@ -650,8 +668,194 @@ impl Invoker {
                     rule: Some(evidence.reference()),
                 })
             }
+            // A permanent decision is a policy edit made by a human gesture in the
+            // window. The window returns only the boundary it confirmed; the rule is
+            // rebuilt here from the normalized argv of that prefix, and the write is
+            // simulated over that same argv before it reaches disk.
+            AccessChoice::AllowAlways { prefix_len } | AccessChoice::DenyAlways { prefix_len } => {
+                let allowing = matches!(choice, AccessChoice::AllowAlways { .. });
+                let section = if allowing {
+                    policy::Section::Accept
+                } else {
+                    policy::Section::Deny
+                };
+                let prefix = normalized_prefix(ignore, args, prefix_len);
+                let written = match rule_target(scope, &prefix) {
+                    Ok((path, rule)) => {
+                        policy::add_rule(&path, section, &rule, &prefix, minimum).map(|()| rule)
+                    }
+                    Err(reason) => Err(Error::InvalidArguments(reason)),
+                };
+                match written {
+                    Ok(rule) => {
+                        audit::log(
+                            &self.paths,
+                            audit_scope,
+                            if allowing {
+                                "policy-accept-added"
+                            } else {
+                                "policy-deny-added"
+                            },
+                            audit_rule,
+                            &audit_rule_shape(scope, &prefix),
+                        );
+                        Ok(PolicyDecision {
+                            result: if allowing {
+                                DecisionResult::Allow
+                            } else {
+                                DecisionResult::Deny
+                            },
+                            source: if allowing {
+                                "human-permanent-allow".into()
+                            } else {
+                                "human-permanent-deny".into()
+                            },
+                            rule: Some(rule),
+                        })
+                    }
+                    // The write failed after the human already held the button. The
+                    // gesture still decides this call — allow means allow once, deny
+                    // means deny — and the failure is loud in audit and on stderr,
+                    // never swallowed into a policy the human believes was changed.
+                    Err(error) => {
+                        audit::log(
+                            &self.paths,
+                            audit_scope,
+                            "policy-write-failed",
+                            audit_rule,
+                            &error.to_string(),
+                        );
+                        eprintln!(
+                            "torii: a decisão permanente não foi gravada: {error}. Esta chamada seguiu apenas o gesto ({}).",
+                            if allowing { "permitida uma vez" } else { "negada" }
+                        );
+                        Ok(PolicyDecision {
+                            result: if allowing {
+                                DecisionResult::Allow
+                            } else {
+                                DecisionResult::Deny
+                            },
+                            source: if allowing {
+                                "human-once".into()
+                            } else {
+                                "human-deny".into()
+                            },
+                            rule: None,
+                        })
+                    }
+                }
+            }
         }
     }
+}
+
+/// Which policy file a permanent decision would be written to, and the literal
+/// rule it would add — or why neither is possible here.
+///
+/// The rule always comes from the **normalized** argv, the one the evaluation
+/// actually sees. Building it from what the window displays would write tokens
+/// that normalization strips, and a rule that never matches is worse than no
+/// rule: an accept that does not allow, or a deny that does not protect.
+fn rule_target(
+    scope: &InvocationScope,
+    normalized: &[String],
+) -> std::result::Result<(std::path::PathBuf, String), String> {
+    Ok((policy_path(scope)?, policy::literal_rule(normalized)?))
+}
+
+/// Which policy file a permanent decision would be written to, or why none can be.
+/// Independent of the argv: it is a property of the invocation's scope.
+fn policy_path(scope: &InvocationScope) -> std::result::Result<std::path::PathBuf, String> {
+    match &scope.target_rules {
+        // A target with a policy of its own: the rule lands in the very file that
+        // produced this unresolved verdict.
+        Some(path) if path.exists() => Ok(path.clone()),
+        // A target that uses the shared policy: writing there would reach every
+        // other target of the provider, which is not what the human is looking at.
+        // Creating the target policy from here is worse — it would drop every
+        // shared accept in this alias at once.
+        Some(_) => Err(format!(
+            "este target usa a política compartilhada do provider; uma regra gravada aqui valeria para todos os targets. Crie a política do alias com `torii policy edit {} --create`",
+            scope.audit_scope.replace('/', " ")
+        )),
+        None => Ok(scope.rules.clone()),
+    }
+}
+
+/// The normalized argv of the first `prefix_len` displayed arguments.
+///
+/// Normalization is applied to the slice, not to the whole argv, because it is not
+/// distributive: a bare flag at the boundary has no value token after it to drop.
+/// Each boundary is normalized on its own so the rule matches what that boundary
+/// would really be evaluated as.
+fn normalized_prefix(ignore: &IgnoreArgs, args: &[String], prefix_len: usize) -> Vec<String> {
+    ignore.normalize(&args[..prefix_len.min(args.len())])
+}
+
+/// Builds the `PermanentPolicy` the window renders: where a rule would go, and one
+/// option per prefix boundary the human can pick in the scope editor.
+fn permanent_options(
+    ignore: &IgnoreArgs,
+    scope: &InvocationScope,
+    policy: &rules::Rules,
+    args: &[String],
+    minimum: usize,
+) -> control::PermanentPolicy {
+    let label = match &scope.target {
+        Some(target) => format!("política do target {target:?}"),
+        None => "política compartilhada do provider".to_string(),
+    };
+    // The scope block does not depend on the boundary: it is decided once.
+    if let Err(reason) = policy_path(scope) {
+        return control::PermanentPolicy::blocked(label, reason, args.len());
+    }
+    let options = (1..=args.len())
+        .map(|prefix_len| {
+            let prefix = normalized_prefix(ignore, args, prefix_len);
+            match rule_target(scope, &prefix) {
+                Err(reason) => control::PermanentOption {
+                    rule: String::new(),
+                    accept_blocked: Some(reason.clone()),
+                    deny_blocked: Some(reason),
+                },
+                Ok((_, rule)) => {
+                    // Each vector is simulated on its own: an accept below the
+                    // provider's minimum width is ignored during evaluation, while a
+                    // deny has no width gate, so the deny button can be live at a
+                    // boundary where the accept cannot.
+                    let blocked = |section| {
+                        policy::simulate(policy, section, &rule, &prefix, minimum)
+                            .err()
+                            .map(|error| error.to_string())
+                    };
+                    control::PermanentOption {
+                        accept_blocked: blocked(policy::Section::Accept),
+                        deny_blocked: blocked(policy::Section::Deny),
+                        rule,
+                    }
+                }
+            }
+        })
+        .collect();
+    control::PermanentPolicy {
+        scope: label,
+        options,
+    }
+}
+
+/// Audit detail for a policy write: the shape of the rule, never the rule itself.
+/// The call reference already carries the first two tokens and the invariant is
+/// that the full argv is not logged.
+fn audit_rule_shape(scope: &InvocationScope, normalized: &[String]) -> String {
+    format!(
+        "{} tokens, {}",
+        normalized.len(),
+        if scope.target_rules.is_some() {
+            "target-policy"
+        } else {
+            "shared-policy"
+        }
+    )
 }
 
 /// Whole minutes keep the historical `2min` shape; an alignment with an older
@@ -682,6 +886,7 @@ fn resolve_scope(
             target: None,
             audit_scope: provider.config.name.clone(),
             rules: provider.paths.rules(),
+            target_rules: None,
             grants: provider.paths.grants(),
             target_args: Vec::new(),
             target_env: None,
@@ -717,13 +922,6 @@ fn resolve_scope(
         )));
     }
 
-    let target_rules = target.paths.rules();
-    let rules = if target_rules.exists() {
-        target_rules
-    } else {
-        provider.paths.rules()
-    };
-
     let identity = &target.config.identity;
     let mut target_args = Vec::new();
     match targeting.mode {
@@ -743,7 +941,8 @@ fn resolve_scope(
     Ok(InvocationScope {
         target: Some(target.config.name.clone()),
         audit_scope: format!("{}/{}", provider.config.name, target.config.name),
-        rules,
+        rules: provider.paths.rules(),
+        target_rules: Some(target.paths.rules()),
         grants: target.paths.grants(),
         target_args,
         target_env: Some(target.paths.env()),
@@ -826,6 +1025,157 @@ fn strip_keys(environment: &mut Vec<(String, String)>, keys: &[&str]) {
 mod tests {
     use super::*;
     use std::fs;
+    use std::path::Path;
+
+    fn args(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| (*value).to_string()).collect()
+    }
+
+    fn empty_policy() -> rules::Rules {
+        serde_yaml::from_str("version: '1.0'\ndeny: []\naccept: []\n").unwrap()
+    }
+
+    fn scope_with(rules_path: &Path, target_rules: Option<&Path>) -> InvocationScope {
+        InvocationScope {
+            target: target_rules.map(|_| "prd".to_string()),
+            audit_scope: "aws/prd".into(),
+            rules: rules_path.to_path_buf(),
+            target_rules: target_rules.map(Path::to_path_buf),
+            grants: rules_path.with_file_name("grants.yaml"),
+            target_args: Vec::new(),
+            target_env: None,
+            trusted_env: Vec::new(),
+            auth: AuthScope {
+                provider: "aws".into(),
+                scope: "aws".into(),
+                expect: None,
+                profile: None,
+            },
+        }
+    }
+
+    /// A janela nunca oferece gravar numa política que não é a avaliada. Num target
+    /// que usa a compartilhada, uma regra gravada ali valeria para todos os outros
+    /// targets do provider — que não é o que o humano está olhando.
+    #[test]
+    fn a_target_without_its_own_policy_offers_no_permanent_decision() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let shared = temp.path().join("rules.yaml");
+        fs::write(
+            &shared,
+            "version: '1.0'
+deny: []
+accept: []
+",
+        )
+        .unwrap();
+        let missing = temp.path().join("targets/prd/rules.yaml");
+
+        let permanent = permanent_options(
+            &IgnoreArgs::default(),
+            &scope_with(&shared, Some(&missing)),
+            &empty_policy(),
+            &args(&["s3", "ls"]),
+            2,
+        );
+        for prefix_len in 1..=2 {
+            let option = permanent.at(prefix_len).unwrap();
+            assert!(!option.allows_accept());
+            assert!(!option.allows_deny());
+            assert!(
+                option
+                    .shared_block()
+                    .is_some_and(|r| r.contains("--create")),
+                "{option:?}"
+            );
+        }
+    }
+
+    /// Uma opção por fronteira: a regra é o prefixo escolhido no editor de escopo,
+    /// não o argv inteiro. É o ajuste fino antes de tornar permanente.
+    #[test]
+    fn every_prefix_boundary_gets_its_own_rule() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let shared = temp.path().join("rules.yaml");
+        fs::write(
+            &shared,
+            "version: '1.0'
+deny: []
+accept: []
+",
+        )
+        .unwrap();
+        let own = temp.path().join("target-rules.yaml");
+        fs::write(
+            &own,
+            "version: '1.0'
+deny: []
+accept: []
+",
+        )
+        .unwrap();
+        let scope = scope_with(&shared, Some(&own));
+
+        let permanent = permanent_options(
+            &IgnoreArgs::default(),
+            &scope,
+            &empty_policy(),
+            &args(&["s3", "ls", "meu-bucket"]),
+            2,
+        );
+        assert_eq!(permanent.options.len(), 3);
+        // Um token só fica abaixo da largura mínima de accept, mas pode ser negado.
+        assert!(!permanent.at(1).unwrap().allows_accept());
+        assert!(permanent.at(1).unwrap().allows_deny());
+        assert_eq!(permanent.at(2).unwrap().rule, "s3 ls");
+        assert_eq!(permanent.at(3).unwrap().rule, "s3 ls meu-bucket");
+        assert!(permanent.at(3).unwrap().allows_accept());
+        assert!(permanent.scope.contains("prd"), "{permanent:?}");
+
+        let (path, rule) = rule_target(&scope, &args(&["s3", "ls"])).unwrap();
+        assert_eq!(path, own);
+        assert_eq!(rule, "s3 ls");
+    }
+
+    /// A regra de cada fronteira vem do argv normalizado daquele prefixo. Construída
+    /// do que a janela mostra, ela carregaria tokens que a normalização remove e
+    /// nunca casaria; normalizar o argv inteiro e cortar depois também erraria, pois
+    /// uma flag na fronteira não tem valor seguinte para descartar.
+    #[test]
+    fn each_boundary_is_normalized_on_its_own() {
+        let ignore = IgnoreArgs {
+            leading: 1,
+            flags: args(&["--region"]),
+        };
+        let shown = args(&["aws", "s3", "ls", "--region", "sa-east-1"]);
+        assert_eq!(normalized_prefix(&ignore, &shown, 5), args(&["s3", "ls"]));
+        assert_eq!(normalized_prefix(&ignore, &shown, 3), args(&["s3", "ls"]));
+        assert_eq!(normalized_prefix(&ignore, &shown, 2), args(&["s3"]));
+        // A fronteira para na flag: não há valor seguinte neste prefixo.
+        assert_eq!(normalized_prefix(&ignore, &shown, 4), args(&["s3", "ls"]));
+
+        let temp = tempfile::TempDir::new().unwrap();
+        let shared = temp.path().join("rules.yaml");
+        fs::write(
+            &shared,
+            "version: '1.0'
+deny: []
+accept: []
+",
+        )
+        .unwrap();
+        let permanent = permanent_options(
+            &ignore,
+            &scope_with(&shared, None),
+            &empty_policy(),
+            &shown,
+            2,
+        );
+        assert_eq!(permanent.at(5).unwrap().rule, "s3 ls");
+        assert_eq!(permanent.at(3).unwrap().rule, "s3 ls");
+        // O primeiro token é descartado pela normalização: não sobra regra.
+        assert!(permanent.at(1).unwrap().shared_block().is_some());
+    }
 
     #[test]
     fn kubectl_target_authenticates_through_its_identity_provider_and_scope() {

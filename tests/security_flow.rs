@@ -354,7 +354,7 @@ async fn inactive_target_is_denied_before_environment_authentication_or_prefligh
 }
 
 #[tokio::test]
-async fn target_rules_override_the_shared_policy() {
+async fn a_target_policy_adds_its_own_deny() {
     let (_temp, paths, registry) = targeted_fixture();
     fs::write(
         paths.provider("kubectl").target("mpce_dev").rules(),
@@ -367,6 +367,137 @@ async fn target_rules_override_the_shared_policy() {
         .unwrap();
     assert_eq!(result.decision.result, DecisionResult::Deny);
     assert!(result.execution.is_none());
+}
+
+/// A política compartilhada é o piso: criar a política de um target não pode ser
+/// o caminho para sair de um deny da raiz. Este é o teste do invariante.
+#[tokio::test]
+async fn a_target_policy_cannot_drop_a_shared_deny() {
+    let (_temp, paths, registry) = targeted_fixture();
+    // O target relista a regra negada na compartilhada como accept e nem repete o
+    // deny. O piso continua valendo.
+    fs::write(
+        paths.provider("kubectl").target("mpce_dev").rules(),
+        "version: '1.0'\ndeny: []\naccept: ['danger']\n",
+    )
+    .unwrap();
+    let result = Invoker::new(paths.clone(), Settings::default(), registry)
+        .invoke("kubectl", Some("mpce_dev"), &["danger".into()])
+        .await
+        .unwrap();
+    assert_eq!(result.decision.result, DecisionResult::Deny);
+    assert_eq!(result.decision.source, "explicit-deny");
+    assert_eq!(result.decision.rule.as_deref(), Some("danger"));
+    assert!(result.execution.is_none());
+    assert!(fs::read_to_string(paths.log())
+        .unwrap()
+        .contains("denied-explicit"));
+}
+
+/// A contrapartida: accept não herda. Um target com política própria carrega só
+/// a superfície de permissão que ele mesmo lista.
+#[tokio::test]
+async fn a_shared_accept_does_not_leak_into_a_target_with_its_own_policy() {
+    let (_temp, paths, registry) = targeted_fixture();
+    fs::write(
+        paths.provider("kubectl").target("mpce_dev").rules(),
+        "version: '1.0'\ndeny: []\naccept: ['get services']\n",
+    )
+    .unwrap();
+
+    let _env_lock = GUI_ENV_LOCK.lock().await;
+    std::env::set_var("TORII_NO_GUI", "1");
+    // `get pods` é accept na compartilhada e não foi relistado aqui: volta a ser
+    // não resolvido, e sem interface humana isso é negado.
+    let result = Invoker::new(paths, Settings::default(), registry)
+        .invoke("kubectl", Some("mpce_dev"), &["get".into(), "pods".into()])
+        .await
+        .unwrap();
+    std::env::remove_var("TORII_NO_GUI");
+
+    assert_eq!(result.decision.result, DecisionResult::Deny);
+    assert_eq!(result.decision.source, "human-deny");
+    assert!(result.execution.is_none());
+}
+
+/// O fim do caminho de uma decisão permanente: a regra gravada pelo gesto humano
+/// resolve a chamada seguinte pelas regras, sem janela e sem grant.
+#[tokio::test]
+async fn a_permanent_rule_resolves_the_next_call_by_policy() {
+    let (_temp, paths, registry) = targeted_fixture();
+    let target_rules = paths.provider("kubectl").target("mpce_dev").rules();
+    fs::write(&target_rules, "version: '1.0'\ndeny: []\naccept: []\n").unwrap();
+    let normalized = vec!["get".to_string(), "services".to_string()];
+
+    torii::policy::add_rule(
+        &target_rules,
+        torii::policy::Section::Accept,
+        "get services",
+        &normalized,
+        1,
+    )
+    .unwrap();
+
+    // A chamada é resolvida pelas regras e segue para a execução, que falha porque
+    // o provider de teste não tem executável: chegar até lá é a prova do allow.
+    let error = Invoker::new(paths.clone(), Settings::default(), registry)
+        .invoke("kubectl", Some("mpce_dev"), &normalized)
+        .await
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("executable-that-must-not-run"),
+        "{error}"
+    );
+    let audit = fs::read_to_string(paths.log()).unwrap();
+    assert!(audit.contains("allowed-by-rules | get services"), "{audit}");
+    // O piso compartilhado continua no arquivo compartilhado, não copiado para cá.
+    let written = fs::read_to_string(&target_rules).unwrap();
+    assert!(written.contains("- get services"), "{written}");
+    assert!(!written.contains("danger"), "{written}");
+}
+
+/// Em headless, uma chamada não resolvida é negada e nada é gravado na política:
+/// não existe decisão permanente sem gesto humano.
+#[tokio::test]
+async fn a_headless_call_never_writes_a_permanent_rule() {
+    let (_temp, paths, registry) = targeted_fixture();
+    let shared_rules = paths.provider("kubectl").rules();
+    let before = fs::read_to_string(&shared_rules).unwrap();
+
+    let _env_lock = GUI_ENV_LOCK.lock().await;
+    std::env::set_var("TORII_NO_GUI", "1");
+    let result = Invoker::new(paths.clone(), Settings::default(), registry)
+        .invoke(
+            "kubectl",
+            Some("mpce_dev"),
+            &["get".into(), "secrets".into()],
+        )
+        .await
+        .unwrap();
+    std::env::remove_var("TORII_NO_GUI");
+
+    assert_eq!(result.decision.result, DecisionResult::Deny);
+    assert_eq!(result.decision.source, "human-deny");
+    assert_eq!(fs::read_to_string(&shared_rules).unwrap(), before);
+    assert!(!paths
+        .provider("kubectl")
+        .target("mpce_dev")
+        .rules()
+        .exists());
+}
+
+/// Sem política própria, o target usa a compartilhada inteira — deny e accept.
+#[tokio::test]
+async fn a_target_without_a_policy_of_its_own_uses_the_shared_one_whole() {
+    let (_temp, paths, registry) = targeted_fixture();
+    let target_rules = paths.provider("kubectl").target("mpce_dev").rules();
+    assert!(!target_rules.exists());
+    let result = Invoker::new(paths, Settings::default(), registry)
+        .invoke("kubectl", Some("mpce_dev"), &["danger".into()])
+        .await
+        .unwrap();
+    assert_eq!(result.decision.result, DecisionResult::Deny);
+    assert_eq!(result.decision.source, "explicit-deny");
 }
 
 #[test]

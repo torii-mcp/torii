@@ -4,6 +4,37 @@ Todas as mudanças relevantes deste projeto são registradas aqui. O formato seg
 [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e o versionamento é
 [semântico](https://semver.org/lang/pt-BR/).
 
+## [Não publicado]
+
+### Adicionado
+
+- **decisão permanente na janela de autorização.** No editor de escopo de uma chamada não
+  resolvida, a caixa dos argumentos fixos ganha dois botões de manter pressionado por cinco
+  segundos: um grava o prefixo escolhido no `accept` da política e executa a chamada, o outro
+  grava no `deny` e a nega. A ordem é o ponto — primeiro o ajuste fino da fronteira, depois a
+  permanência — e os cinco segundos existem para dar tempo de pensar antes de mexer na política.
+  A regra vem do argv normalizado daquele prefixo, cada fronteira é simulada sobre a política
+  resultante antes de a janela abrir (um botão que não funcionaria nasce desabilitado com o
+  motivo), a escrita é feita pelo servidor com releitura do disco, preservação de comentários e
+  substituição atômica, e cada gravação entra na auditoria como `policy-accept-added` ou
+  `policy-deny-added`. As novas origens de decisão são `human-permanent-allow` e
+  `human-permanent-deny`;
+
+### Alterado
+
+- **A política de um target deixa de substituir a compartilhada por inteiro.** Os dois vetores
+  passam a compor de formas diferentes, porque não significam a mesma coisa: `deny` acumula — os
+  denies do `rules.yaml` compartilhado valem em todos os targets e não podem ser removidos pela
+  política de um alias — e `accept` continua sendo substituído, porque um target existe para ter
+  outra superfície de permissão. Antes, criar `targets/<alias>/rules.yaml` apagava o piso de deny
+  do provider naquele alias: o alias mais sensível era justamente o que ganhava o direito de sair
+  da política da raiz. **Quebra de compatibilidade:** uma política de target que hoje depende de
+  omitir um deny compartilhado para liberar algo passa a ser negada; para um veto que valha só em
+  alguns aliases, a regra desce para o `deny` de cada um deles;
+- `torii policy show <tool> <target>` imprime as duas camadas e o conjunto efetivo, em vez de um
+  arquivo só, e `torii_policy` devolve ao agente o efetivo — `deny` com o piso compartilhado
+  seguido do target, `accept` somente do target.
+
 ## [0.3.0] — 2026-08-18
 
 ### Adicionado

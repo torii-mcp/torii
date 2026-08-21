@@ -25,20 +25,22 @@ O repositório irmão `../awsgate` é somente referência. Nunca edite, formate,
 
 1. Default deny: o que não foi aceito, concedido temporariamente ou aprovado é negado.
 2. Deny explícito sempre vence accept, grant e aprovação humana.
-3. Matching é por prefixo de tokens, nunca por `String::starts_with` na linha reconstruída.
-4. O MCP recebe `args: string[]` e, em providers target-aware, `target`; preserve `args` como vetor até `Command::args` e resolva o target somente por configuração humana.
-5. Nunca monte linha de shell para encaminhar providers (`bash -c`, `sh -c`, `cmd /c`, PowerShell). No Windows, um `command` que resolve para wrapper `.bat`/`.cmd` é carregado pelo `cmd.exe` pelo próprio sistema; os argumentos continuam seguindo como vetor até `Command::args`, e um argumento que a citação de batch não consiga expressar precisa falhar o launch em vez de chegar ambíguo.
-6. Política é avaliada antes de ler `.env`, credenciais ou cache de sessão.
-7. Credenciais são aplicadas somente ao processo filho; nunca use `std::env::set_var` para sessão.
-8. Não registre credenciais, clipboard, stdout/stderr completos ou a lista completa de argumentos.
-9. Reautenticação só substitui a sessão anterior após validar a candidata.
-10. Uma única renovação por provider simples ou target pode acontecer por vez.
-11. Stdout do processo servidor pertence exclusivamente ao transporte MCP. Diagnósticos vão para stderr ou auditoria.
-12. Uma tool por provider, nunca uma tool por operação.
-13. O agente não recebe tools de `kill`, `reauth`, instalação ou edição de política.
-14. Targets começam inativos; alias anunciado não concede acesso. O lease humano temporário é verificado depois do deny explícito e antes de grants, ambiente ou autenticação.
-15. Lease de target é vinculado ao binding, relido do disco e atualizado com revisão/lock; uma aprovação aberta antes de `target clear` não pode restaurá-lo.
-16. Não crie uma abstração genérica antes de dois providers reais demonstrarem a necessidade.
+3. Regra permanente entra na política só por gesto humano na janela e só se a simulação sobre aquele argv der o veredicto pretendido; a janela devolve a fronteira escolhida, o servidor reconstrói e grava a regra.
+4. Em provider target-aware, política compõe em camadas: `deny` do compartilhado é piso e a política do target só soma; `accept` do target substitui o compartilhado. Criar política de target nunca remove um deny da raiz.
+5. Matching é por prefixo de tokens, nunca por `String::starts_with` na linha reconstruída.
+6. O MCP recebe `args: string[]` e, em providers target-aware, `target`; preserve `args` como vetor até `Command::args` e resolva o target somente por configuração humana.
+7. Nunca monte linha de shell para encaminhar providers (`bash -c`, `sh -c`, `cmd /c`, PowerShell). No Windows, um `command` que resolve para wrapper `.bat`/`.cmd` é carregado pelo `cmd.exe` pelo próprio sistema; os argumentos continuam seguindo como vetor até `Command::args`, e um argumento que a citação de batch não consiga expressar precisa falhar o launch em vez de chegar ambíguo.
+8. Política é avaliada antes de ler `.env`, credenciais ou cache de sessão.
+9. Credenciais são aplicadas somente ao processo filho; nunca use `std::env::set_var` para sessão.
+10. Não registre credenciais, clipboard, stdout/stderr completos ou a lista completa de argumentos.
+11. Reautenticação só substitui a sessão anterior após validar a candidata.
+12. Uma única renovação por provider simples ou target pode acontecer por vez.
+13. Stdout do processo servidor pertence exclusivamente ao transporte MCP. Diagnósticos vão para stderr ou auditoria.
+14. Uma tool por provider, nunca uma tool por operação.
+15. O agente não recebe tools de `kill`, `reauth`, instalação ou edição de política.
+16. Targets começam inativos; alias anunciado não concede acesso. O lease humano temporário é verificado depois do deny explícito e antes de grants, ambiente ou autenticação.
+17. Lease de target é vinculado ao binding, relido do disco e atualizado com revisão/lock; uma aprovação aberta antes de `target clear` não pode restaurá-lo.
+18. Não crie uma abstração genérica antes de dois providers reais demonstrarem a necessidade.
 
 ## Mapa do código
 

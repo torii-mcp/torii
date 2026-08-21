@@ -22,7 +22,7 @@ Para uma tool target-aware, informe o alias anunciado:
 }
 ```
 
-A resposta contém `accept`, `deny`, `minimum_accept_tokens` e `ignored_accept`. Quando existir `targets/<alias>/rules.yaml`, ela é a política devolvida, pois substitui a regra compartilhada. `unmatched` explica que comandos fora dessas listas continuam em default deny, salvo aprovação humana ou grant temporário ativo. A consulta não mostra credenciais, ambiente, grants ou leases e não modifica estado; ela funciona mesmo quando o alias está inativo.
+A resposta contém `accept`, `deny`, `minimum_accept_tokens` e `ignored_accept`. Quando existir `targets/<alias>/rules.yaml`, a resposta é o conjunto **efetivo**: `deny` traz os denies compartilhados seguidos dos do target e `accept` traz somente os do target. `unmatched` explica que comandos fora dessas listas continuam em default deny, salvo aprovação humana ou grant temporário ativo. A consulta não mostra credenciais, ambiente, grants ou leases e não modifica estado; ela funciona mesmo quando o alias está inativo.
 
 ## Provider simples
 

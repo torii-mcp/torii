@@ -38,6 +38,29 @@ impl Rules {
         })
     }
 
+    /// The ruleset that applies inside a target, composed from the shared
+    /// provider policy and the target's own.
+    ///
+    /// The two vectors do not compose the same way, because they do not mean the
+    /// same thing. `deny` accumulates: a shared deny is the provider-wide floor
+    /// and creating a target policy must never be a way to step off it. `accept`
+    /// is replaced: a target exists precisely to carry a different permission
+    /// surface, so a shared allow must not leak into a target that declared its
+    /// own. A target that wants a shared accept back relists it.
+    pub fn layered(shared: &Rules, target: &Rules) -> Rules {
+        let mut deny = shared.deny.clone();
+        for rule in &target.deny {
+            if !deny.contains(rule) {
+                deny.push(rule.clone());
+            }
+        }
+        Rules {
+            version: target.version.clone(),
+            deny,
+            accept: target.accept.clone(),
+        }
+    }
+
     /// Accept rules that fall below the provider's minimum token width and are
     /// therefore ignored during evaluation. Regex rules carry their own
     /// specificity and are exempt from the token-width gate.
@@ -135,6 +158,18 @@ pub fn load(path: &Path) -> Result<Rules> {
     })
 }
 
+/// The effective policy for an invocation scope. A target policy is layered over
+/// the shared provider one; a target without a policy of its own uses the shared
+/// policy whole. The shared policy is always required: it carries the deny floor,
+/// so a missing file is an error, never an empty floor.
+pub fn load_effective(shared: &Path, target: Option<&Path>) -> Result<Rules> {
+    let base = load(shared)?;
+    match target.filter(|path| path.exists()) {
+        None => Ok(base),
+        Some(path) => Ok(Rules::layered(&base, &load(path)?)),
+    }
+}
+
 /// Literal token-prefix match: every token of the rule must equal the argv token
 /// at the same position; extra argv tokens after the prefix are allowed.
 fn literal_matches(args: &[String], rule: &[String]) -> bool {
@@ -161,7 +196,7 @@ fn regex_parts(raw: &str) -> Option<(&str, &str)> {
     }
 }
 
-fn is_regex_rule(raw: &str) -> bool {
+pub fn is_regex_rule(raw: &str) -> bool {
     regex_parts(raw).is_some()
 }
 
@@ -297,6 +332,69 @@ mod tests {
             accept: Vec::new(),
         };
         assert!(matches!(rules.compile(), Err(Error::InvalidRule { .. })));
+    }
+
+    fn rules(deny: &[&str], accept: &[&str]) -> Rules {
+        Rules {
+            version: "1.0".into(),
+            deny: s(deny),
+            accept: s(accept),
+        }
+    }
+
+    #[test]
+    fn a_target_policy_cannot_drop_a_shared_deny() {
+        let shared = rules(&["iam"], &["s3 ls"]);
+        let target = rules(&[], &["iam get-role"]);
+        let effective = Rules::layered(&shared, &target);
+        // The target relisted iam as an accept; the shared floor still wins.
+        assert!(matches!(
+            effective
+                .compile()
+                .unwrap()
+                .evaluate(&s(&["iam", "get-role", "admin"]), 1),
+            Evaluation::DeniedExplicit { rule } if rule == "iam"
+        ));
+    }
+
+    #[test]
+    fn a_target_policy_replaces_the_shared_accepts() {
+        let shared = rules(&[], &["s3 ls", "ec2 describe-instances"]);
+        let target = rules(&[], &["s3 ls"]);
+        let effective = Rules::layered(&shared, &target);
+        assert_eq!(effective.accept, s(&["s3 ls"]));
+        // What the target did not relist is default-deny again, not inherited.
+        assert!(matches!(
+            effective
+                .compile()
+                .unwrap()
+                .evaluate(&s(&["ec2", "describe-instances"]), 1),
+            Evaluation::Unresolved
+        ));
+    }
+
+    #[test]
+    fn a_target_deny_narrows_only_its_own_target() {
+        // "zero IAM in prd, some gets in dev": the deny lives in the target that
+        // wants it, and the accept in the target that wants the exception.
+        let shared = rules(&[], &["s3 ls"]);
+        let prd = Rules::layered(&shared, &rules(&["iam"], &["s3 ls"]));
+        let dev = Rules::layered(&shared, &rules(&[], &["s3 ls", "iam get-role"]));
+        let args = s(&["iam", "get-role", "admin"]);
+        assert!(matches!(
+            prd.compile().unwrap().evaluate(&args, 1),
+            Evaluation::DeniedExplicit { .. }
+        ));
+        assert!(matches!(
+            dev.compile().unwrap().evaluate(&args, 1),
+            Evaluation::Allowed { .. }
+        ));
+    }
+
+    #[test]
+    fn layering_does_not_duplicate_a_deny_the_target_repeats() {
+        let effective = Rules::layered(&rules(&["s3 rb"], &[]), &rules(&["s3 rb", "iam"], &[]));
+        assert_eq!(effective.deny, s(&["s3 rb", "iam"]));
     }
 
     #[test]

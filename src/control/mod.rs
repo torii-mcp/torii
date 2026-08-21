@@ -24,6 +24,86 @@ pub enum AccessChoice {
         seconds: u32,
         selection: GrantSelection,
     },
+    /// Write a rule over the first `prefix_len` arguments into the policy's
+    /// `accept` and run this call. The window only returns this after a
+    /// five-second press-and-hold, and the server rebuilds the rule from the
+    /// boundary rather than trusting a rule string from the prompt process.
+    AllowAlways {
+        prefix_len: usize,
+    },
+    /// The same at the `deny` vector, refusing this call.
+    DenyAlways {
+        prefix_len: usize,
+    },
+}
+
+/// What a permanent decision would write at one prefix boundary.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PermanentOption {
+    /// The literal rule for this boundary. Empty when it cannot be written.
+    pub rule: String,
+    /// Why the permanent accept is unavailable at this boundary, when it is.
+    pub accept_blocked: Option<String>,
+    /// Why the permanent deny is unavailable at this boundary, when it is.
+    pub deny_blocked: Option<String>,
+}
+
+impl PermanentOption {
+    fn blocked(reason: String) -> Self {
+        Self {
+            rule: String::new(),
+            accept_blocked: Some(reason.clone()),
+            deny_blocked: Some(reason),
+        }
+    }
+
+    pub fn allows_accept(&self) -> bool {
+        self.accept_blocked.is_none() && !self.rule.is_empty()
+    }
+
+    pub fn allows_deny(&self) -> bool {
+        self.deny_blocked.is_none() && !self.rule.is_empty()
+    }
+
+    /// The reason both buttons are unavailable, when it is the same one.
+    pub fn shared_block(&self) -> Option<&str> {
+        match (&self.accept_blocked, &self.deny_blocked) {
+            (Some(accept), Some(deny)) if accept == deny => Some(accept),
+            _ => None,
+        }
+    }
+}
+
+/// What a permanent decision would write, and where.
+///
+/// Computed by the server before the window opens, one option per prefix
+/// boundary the human can choose: the window never derives a rule of its own,
+/// and a boundary whose write could not work is disabled with the reason on it
+/// instead of failing after the human already held the button for five seconds.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PermanentPolicy {
+    /// Human label of the policy file that would receive the rule.
+    pub scope: String,
+    /// Index `k - 1` describes a rule over the first `k` displayed arguments.
+    pub options: Vec<PermanentOption>,
+}
+
+impl PermanentPolicy {
+    /// Nothing permanent is offered at any boundary, all for the same reason.
+    pub fn blocked(scope: impl Into<String>, reason: impl Into<String>, len: usize) -> Self {
+        let reason = reason.into();
+        Self {
+            scope: scope.into(),
+            options: (0..len)
+                .map(|_| PermanentOption::blocked(reason.clone()))
+                .collect(),
+        }
+    }
+
+    /// The option for a boundary of `prefix_len` arguments, when there is one.
+    pub fn at(&self, prefix_len: usize) -> Option<&PermanentOption> {
+        self.options.get(prefix_len.checked_sub(1)?)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -60,11 +140,12 @@ pub async fn ask_access(
     args: &[String],
     default_minutes: u32,
     align_seconds: Option<u32>,
+    permanent: PermanentPolicy,
 ) -> Result<AccessChoice> {
     if gui_disabled() {
         return Ok(AccessChoice::Deny);
     }
-    gui::ask_access(provider, args, default_minutes, align_seconds).await
+    gui::ask_access(provider, args, default_minutes, align_seconds, permanent).await
 }
 
 pub async fn ask_target_access(
