@@ -6,7 +6,8 @@ Para abrir a política no seu editor, com validação antes de aplicar:
 torii policy show aws                    # imprime a política ativa e seu caminho
 torii policy edit aws                    # edita a política compartilhada do provider
 torii policy edit kubectl dev            # edita a política daquele alias
-torii policy edit kubectl dev --create   # cria a política do alias
+torii policy edit kubectl dev --create   # cria a política do alias, vazia
+torii policy edit kubectl dev --create --copy-shared   # ...ou semeada com a compartilhada
 ```
 
 `policy edit` trabalha sobre uma cópia: ao fechar o editor, o Torii parseia o YAML e compila cada regra, e só então substitui o arquivo vivo. Uma regex inválida ou um YAML malformado é recusado antes de virar política, e o rascunho é preservado para você corrigir. Nada impede editar `rules.yaml` à mão — o comando existe para que um erro de digitação não vire uma negação inesperada no meio de uma sessão do agente. Detalhes em [CLI de controle](../reference/cli.md).

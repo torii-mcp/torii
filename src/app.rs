@@ -1,6 +1,7 @@
 use crate::config::{env_file, settings, ConfigPaths};
 use crate::core::Invoker;
 use crate::error::{Error, Result};
+use crate::policy::CreateMode;
 use crate::providers::auth::session;
 use crate::providers::packages::{self, InstallStatus};
 use crate::providers::{AuthStrategy, ProviderRegistry};
@@ -146,7 +147,7 @@ async fn run_async(args: Vec<String>) -> Result<i32> {
             Ok(0)
         }
         [command, subcommand, tool] if command == "policy" && subcommand == "edit" => {
-            crate::policy::edit(&paths, tool, None, false)?;
+            crate::policy::edit(&paths, tool, None, CreateMode::No)?;
             Ok(0)
         }
         [command, subcommand, tool, rest @ ..] if command == "policy" && subcommand == "edit" => {
@@ -353,15 +354,17 @@ fn is_portable_agent(agent: &str) -> bool {
 
 /// `policy edit <tool> [target] [--create]`: o alvo é posicional e `--create` só
 /// faz sentido para um target, que é o único escopo que o Torii pode criar.
-fn policy_edit_options(rest: &[String]) -> Result<(Option<&str>, bool)> {
+fn policy_edit_options(rest: &[String]) -> Result<(Option<&str>, CreateMode)> {
     let mut target = None;
     let mut create = false;
+    let mut copy_shared = false;
     for argument in rest {
         match argument.as_str() {
             "--create" if !create => create = true,
+            "--copy-shared" if !copy_shared => copy_shared = true,
             value if value.starts_with('-') => {
                 return Err(Error::InvalidArguments(format!(
-                    "unexpected argument {value:?}; expected an optional target and --create"
+                    "unexpected argument {value:?}; expected an optional target, --create and --copy-shared"
                 )));
             }
             value if target.is_none() => target = Some(value),
@@ -377,7 +380,18 @@ fn policy_edit_options(rest: &[String]) -> Result<(Option<&str>, bool)> {
             "--create applies to a target policy; pass the target name to create it".into(),
         ));
     }
-    Ok((target, create))
+    // `--copy-shared` diz *como* criar; sozinho ele não tem o que fazer.
+    if copy_shared && !create {
+        return Err(Error::InvalidArguments(
+            "--copy-shared only applies together with --create".into(),
+        ));
+    }
+    let mode = match (create, copy_shared) {
+        (false, _) => CreateMode::No,
+        (true, false) => CreateMode::Empty,
+        (true, true) => CreateMode::CopyShared,
+    };
+    Ok((target, mode))
 }
 
 fn install_flags(flags: &[String]) -> Result<(bool, bool)> {

@@ -8,6 +8,12 @@ Todas as mudanças relevantes deste projeto são registradas aqui. O formato seg
 
 ### Adicionado
 
+- `--copy-shared` em `torii policy edit <tool> <target> --create`: começa a política do alias com
+  uma cópia da compartilhada em vez do template vazio. As duas formas servem casos opostos e
+  ambas continuam disponíveis — vazia para um alias que precisa ser mais restrito que a raiz e
+  listar explicitamente o que passa, semeada para um alias que precisa ser mais frouxo e só
+  acrescentar. O arquivo gerado carrega no cabeçalho o aviso de que a cópia é um retrato: dali em
+  diante um accept novo na compartilhada não chega mais naquele alias;
 - **modo de target `credentials`.** Um terceiro `targeting.mode` em que o alias é o balde de
   credencial e nada é injetado no argv: serve a CLIs cuja credencial vem do ambiente, como o
   `aws` com `auth.strategy: environment`, em que cada alias coleta as próprias chaves pela

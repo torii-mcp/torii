@@ -19,6 +19,39 @@ fn write_provider(config: &TempDir) {
     std::fs::write(provider.join("rules.yaml"), POLICY).unwrap();
 }
 
+/// O mesmo provider, target-aware por balde de credencial, com um alias sem
+/// política própria — o estado em que `--create` e `--copy-shared` operam.
+fn write_targeted_provider(config: &TempDir) {
+    let provider = config.path().join("providers").join("aws");
+    std::fs::create_dir_all(&provider).unwrap();
+    std::fs::write(
+        provider.join("provider.yaml"),
+        "version: \"1\"\nname: aws\ntool: aws\ndescription: AWS test provider\ncommand: aws\ntargeting:\n  mode: credentials\n  locked_options: [\"--profile\"]\npolicy:\n  minimum_accept_tokens: 2\nauth:\n  strategy: inherited\nenvironment:\n  file: .env\n",
+    )
+    .unwrap();
+    std::fs::write(provider.join("rules.yaml"), POLICY).unwrap();
+    let target = provider.join("targets").join("hml");
+    std::fs::create_dir_all(&target).unwrap();
+    std::fs::write(
+        target.join("target.yaml"),
+        "version: '1'\nname: hml\nidentity:\n  provider: aws\n",
+    )
+    .unwrap();
+}
+
+fn target_rules_of(config: &TempDir) -> String {
+    std::fs::read_to_string(
+        config
+            .path()
+            .join("providers")
+            .join("aws")
+            .join("targets")
+            .join("hml")
+            .join("rules.yaml"),
+    )
+    .unwrap()
+}
+
 /// Um "editor" que apenas acrescenta uma linha ao arquivo recebido, para exercitar
 /// o fluxo sem depender de um editor real. `.bat` no Windows, script `sh` fora dele.
 fn fake_editor(home: &TempDir, name: &str, appended: &str) -> String {
@@ -201,4 +234,71 @@ fn policy_commands_reject_unknown_scopes() {
     assert!(!create_without_target.status.success());
     let stderr = String::from_utf8_lossy(&create_without_target.stderr);
     assert!(stderr.contains("pass the target name"), "{stderr}");
+}
+
+/// `--create` sozinho abre o template vazio: é o alias que precisa ser mais
+/// restrito que a raiz e listar explicitamente o que passa.
+#[test]
+fn create_alone_starts_an_empty_target_policy() {
+    let config = TempDir::new().unwrap();
+    let scripts = TempDir::new().unwrap();
+    write_targeted_provider(&config);
+    let editor = fake_editor(&scripts, "append", "# revisado");
+
+    let output = edit(&config, &editor, &["aws", "hml", "--create"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let written = target_rules_of(&config);
+    assert!(written.contains("deny: []"), "{written}");
+    assert!(written.contains("accept: []"), "{written}");
+    // O accept da compartilhada não entra: o alias começa sem superfície própria.
+    assert!(!written.contains("ec2 describe-instances"), "{written}");
+}
+
+/// `--create --copy-shared` semeia com a compartilhada, para o alias que precisa
+/// ser mais frouxo: abre já com tudo dentro e você acrescenta.
+#[test]
+fn create_with_copy_shared_seeds_from_the_provider_policy() {
+    let config = TempDir::new().unwrap();
+    let scripts = TempDir::new().unwrap();
+    write_targeted_provider(&config);
+    let editor = fake_editor(&scripts, "append", "  - \"logs tail\"");
+
+    let output = edit(
+        &config,
+        &editor,
+        &["aws", "hml", "--create", "--copy-shared"],
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let written = target_rules_of(&config);
+    // A compartilhada inteira, mais o que o editor acrescentou.
+    assert!(written.contains("ec2 describe-instances"), "{written}");
+    assert!(written.contains("ecs execute-command"), "{written}");
+    assert!(written.contains("logs tail"), "{written}");
+    // E o cabeçalho que avisa que a cópia é um retrato, não um vínculo.
+    assert!(written.contains("seguem separadas"), "{written}");
+}
+
+/// A flag diz *como* criar; sozinha ela não tem o que fazer.
+#[test]
+fn copy_shared_requires_create() {
+    let config = TempDir::new().unwrap();
+    let scripts = TempDir::new().unwrap();
+    write_targeted_provider(&config);
+    let editor = noop_editor(&scripts);
+
+    let output = edit(&config, &editor, &["aws", "hml", "--copy-shared"]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("only applies together with --create"),
+        "{stderr}"
+    );
 }

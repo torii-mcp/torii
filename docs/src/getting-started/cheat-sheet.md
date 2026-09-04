@@ -97,7 +97,8 @@ Todo pacote instala `rules.yaml` **vazio**: nada atravessa até você escrever a
 torii policy show aws              # imprime a política ativa e seu caminho
 torii policy edit aws             # abre no $EDITOR, valida antes de aplicar
 torii policy edit kubectl dev     # política só daquele alias
-torii policy edit kubectl dev --create   # cria a política do alias: soma denies, substitui accepts
+torii policy edit kubectl dev --create   # cria a política do alias, vazia
+torii policy edit kubectl dev --create --copy-shared   # cria semeada com a compartilhada
 ```
 
 O arquivo é `providers/<provider>/rules.yaml`; um `targets/<alias>/rules.yaml` soma denies ao

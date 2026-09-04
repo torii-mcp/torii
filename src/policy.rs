@@ -346,7 +346,25 @@ fn insert(text: &str, section: Section, rule: &str) -> Result<String> {
     )))
 }
 
-pub fn edit(paths: &ConfigPaths, tool: &str, target: Option<&str>, create: bool) -> Result<()> {
+/// O que `policy edit` faz quando a política do target ainda não existe.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CreateMode {
+    /// Não cria: um target sem política própria usa a compartilhada inteira.
+    No,
+    /// Cria vazia, para um alias que precisa ser mais restrito que a raiz e
+    /// listar explicitamente o que passa.
+    Empty,
+    /// Cria com uma cópia da política compartilhada, para um alias que precisa
+    /// ser mais frouxo: abre já com tudo dentro e você acrescenta.
+    CopyShared,
+}
+
+pub fn edit(
+    paths: &ConfigPaths,
+    tool: &str,
+    target: Option<&str>,
+    create: CreateMode,
+) -> Result<()> {
     let registry = ProviderRegistry::load(paths)?;
     let provider = resolve_provider(&registry, tool)?;
     let (path, scope) = rules_path(&provider, tool, target)?;
@@ -356,7 +374,10 @@ pub fn edit(paths: &ConfigPaths, tool: &str, target: Option<&str>, create: bool)
         (true, _) => read_text(&path)?,
         // Criar rules de target é uma decisão semântica: os accepts compartilhados
         // param de valer naquele alias, então exigem um pedido explícito.
-        (false, Some(_)) if create => TARGET_TEMPLATE.to_string(),
+        (false, Some(_)) if create == CreateMode::CopyShared => {
+            seeded_from_shared(&provider, tool)?
+        }
+        (false, Some(_)) if create == CreateMode::Empty => TARGET_TEMPLATE.to_string(),
         (false, Some(_)) => {
             return Err(Error::InvalidArguments(format!(
                 "{scope} has no rules of its own and uses the shared provider policy whole; pass --create to start a target policy, which adds denies to the shared ones and replaces the shared accepts"
@@ -402,6 +423,33 @@ pub fn edit(paths: &ConfigPaths, tool: &str, target: Option<&str>, create: bool)
     );
     warn_ignored_accepts(&edited, minimum);
     Ok(())
+}
+
+/// A política compartilhada, verbatim, com um cabeçalho dizendo o que ela é.
+///
+/// A cópia é um retrato, não um vínculo: dali em diante as duas seguem separadas
+/// e um accept novo na compartilhada não chega mais neste alias. Isso vai escrito
+/// dentro do arquivo, onde quem for editar daqui a seis meses vai ler.
+fn seeded_from_shared(provider: &Provider, tool: &str) -> Result<String> {
+    let shared_path = provider.paths.rules();
+    if !shared_path.exists() {
+        return Err(Error::RulesNotFound(shared_path));
+    }
+    let (_, shared) = read_policy(&shared_path)?;
+    let mut seeded = format!(
+        "# Cópia da política compartilhada de {tool:?}, feita ao criar a política\n\
+         # deste alias. A partir daqui as duas seguem separadas: um accept novo na\n\
+         # compartilhada NÃO chega mais aqui, e precisa ser repetido neste arquivo.\n\
+         #\n\
+         # Os denies da compartilhada continuam valendo neste alias mesmo que você\n\
+         # os apague daqui: eles são o piso do provider. Os accepts abaixo são os\n\
+         # únicos que valem neste alias.\n\n"
+    );
+    seeded.push_str(&shared);
+    if !seeded.ends_with('\n') {
+        seeded.push('\n');
+    }
+    Ok(seeded)
 }
 
 /// Uma política só substitui a anterior depois de parsear e de compilar cada
