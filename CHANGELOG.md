@@ -4,7 +4,7 @@ Todas as mudanças relevantes deste projeto são registradas aqui. O formato seg
 [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e o versionamento é
 [semântico](https://semver.org/lang/pt-BR/).
 
-## [Não publicado]
+## [0.4.0] — 2026-09-04
 
 ### Adicionado
 
