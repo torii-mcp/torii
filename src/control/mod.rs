@@ -1,3 +1,4 @@
+mod chrome;
 pub mod gui;
 
 use crate::error::Result;
@@ -170,6 +171,7 @@ pub async fn ask_target_access(
 
 pub async fn ask_auth(
     provider: &str,
+    target: Option<&str>,
     fields: &[AuthField],
     error: Option<&str>,
     validation: AuthValidation,
@@ -180,7 +182,7 @@ pub async fn ask_auth(
             invalid_attempts: 0,
         });
     }
-    gui::ask_auth(provider, fields, error, validation).await
+    gui::ask_auth(provider, target, fields, error, validation).await
 }
 
 pub fn gui_disabled() -> bool {

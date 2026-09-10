@@ -20,7 +20,9 @@ Implementada. O provider declara campos, templates de injeção e validação. O
 6. persistir atomicamente e atualizar o cache;
 7. devolver as variáveis para a execução autorizada.
 
-Campos secretos usam input mascarado. Campos multilinha têm altura limitada e rolagem interna, para que valores longos não desloquem o restante do formulário. O botão de clipboard aceita `export KEY=value`, `SET KEY=value`, `$Env:KEY=value` e `KEY=value`, mantendo somente nomes declarados. A barra de status ocupa uma altura fixa e toda a largura no limite inferior da janela, abaixo das ações alinhadas à direita, e alterna entre pronto, progresso, erro e sucesso sem deslocar o layout. Uma candidata recusada reabilita o mesmo formulário sem fechar ou recriar a janela; uma candidata aceita mostra brevemente `👍 Sessão validada.` antes do fechamento automático.
+Quando a invocação nomeou um target, a janela o identifica: o título traz `provider/target` e uma faixa destacada acima do formulário repete para qual target aquelas credenciais vão servir. Vários targets podem compartilhar o mesmo provider de identidade, e duas janelas abertas ao mesmo tempo seriam indistinguíveis sem isso.
+
+Campos secretos usam input mascarado. Campos multilinha têm altura limitada e rolagem interna, para que valores longos não desloquem o restante do formulário. O botão de clipboard aceita `export KEY=value`, `SET KEY=value`, `$Env:KEY=value` e `KEY=value`, mantendo somente nomes declarados. A barra de status ocupa uma altura fixa e toda a largura no limite inferior da janela, abaixo das ações alinhadas à direita, e alterna entre pronto, progresso, erro e sucesso sem deslocar o layout. Dobrada (veja abaixo), a barra de título oferece **Colar** e **Colar e validar**, que desdobram a janela antes de agir. Uma candidata recusada reabilita o mesmo formulário sem fechar ou recriar a janela; uma candidata aceita mostra brevemente `👍 Sessão validada.` antes do fechamento automático.
 
 ## `inherited`
 

@@ -8,6 +8,28 @@ use std::collections::HashMap;
 use std::io::Write;
 use tokio::sync::Mutex;
 
+/// Who is being authenticated, and what for.
+///
+/// `audit` names the identity provider that owns the credentials — the scope
+/// every session event is logged under. `requested_for` names the provider
+/// target the invocation asked for, when there is one: several targets can
+/// share one identity provider, and the human needs to know which target the
+/// credentials in front of them are about to serve.
+#[derive(Clone, Copy)]
+pub struct SessionScope<'a> {
+    pub audit: &'a str,
+    pub requested_for: Option<&'a str>,
+}
+
+impl<'a> SessionScope<'a> {
+    pub fn provider(audit: &'a str) -> Self {
+        Self {
+            audit,
+            requested_for: None,
+        }
+    }
+}
+
 pub struct SessionEnvironment<'a> {
     pub persistent_env: &'a [(String, String)],
     pub removed_env: &'a [&'a str],
@@ -18,7 +40,7 @@ pub async fn ensure_valid(
     provider: &Provider,
     paths: &AuthPaths,
     auth_lock: &Mutex<()>,
-    audit_scope: &str,
+    scope: SessionScope<'_>,
     environment: SessionEnvironment<'_>,
     force: bool,
 ) -> Result<Vec<(String, String)>> {
@@ -31,7 +53,7 @@ pub async fn ensure_valid(
                 root,
                 provider,
                 paths,
-                audit_scope,
+                scope,
                 environment.persistent_env,
                 environment.removed_env,
                 force,
@@ -43,7 +65,7 @@ pub async fn ensure_valid(
                 root,
                 provider,
                 paths,
-                audit_scope,
+                scope,
                 environment.persistent_env,
                 environment.removed_env,
                 force,
@@ -61,7 +83,7 @@ async fn ensure_inherited(
     root: &ConfigPaths,
     provider: &Provider,
     paths: &AuthPaths,
-    audit_scope: &str,
+    scope: SessionScope<'_>,
     persistent_env: &[(String, String)],
     removed_env: &[&str],
     force: bool,
@@ -73,7 +95,7 @@ async fn ensure_inherited(
         });
     }
     if provider.config.auth.validate.is_none() {
-        audit::log(root, audit_scope, "session-unchecked", "-", "");
+        audit::log(root, scope.audit, "session-unchecked", "-", "");
         return Ok(Vec::new());
     }
     if session_cached(provider, paths) {
@@ -81,11 +103,11 @@ async fn ensure_inherited(
     }
     if validate(provider, persistent_env, &[], removed_env).await? {
         record_success(paths);
-        audit::log(root, audit_scope, "session-ok", "-", "");
+        audit::log(root, scope.audit, "session-ok", "-", "");
         Ok(Vec::new())
     } else {
         Err(Error::SessionInvalid {
-            provider: audit_scope.into(),
+            provider: scope.audit.into(),
         })
     }
 }
@@ -94,7 +116,7 @@ async fn ensure_environment(
     root: &ConfigPaths,
     provider: &Provider,
     paths: &AuthPaths,
-    audit_scope: &str,
+    scope: SessionScope<'_>,
     persistent_env: &[(String, String)],
     removed_env: &[&str],
     force: bool,
@@ -108,14 +130,14 @@ async fn ensure_environment(
             && validate(provider, persistent_env, &existing, removed_env).await?
         {
             record_success(paths);
-            audit::log(root, audit_scope, "session-ok", "-", "");
+            audit::log(root, scope.audit, "session-ok", "-", "");
             return Ok(existing);
         }
     }
 
     audit::log(
         root,
-        audit_scope,
+        scope.audit,
         if force {
             "reauth-forced"
         } else {
@@ -141,19 +163,25 @@ async fn ensure_environment(
         persistent_env: persistent_env.to_vec(),
         environment_templates: templates.clone(),
     };
-    let prompt =
-        control::ask_auth(audit_scope, &provider.config.auth.fields, None, validation).await?;
+    let prompt = control::ask_auth(
+        scope.audit,
+        scope.requested_for,
+        &provider.config.auth.fields,
+        None,
+        validation,
+    )
+    .await?;
     for _ in 0..prompt.invalid_attempts {
-        audit::log(root, audit_scope, "session-candidate-invalid", "-", "");
+        audit::log(root, scope.audit, "session-candidate-invalid", "-", "");
     }
     let Some(fields) = prompt.fields else {
-        return Err(Error::AuthCancelled(audit_scope.into()));
+        return Err(Error::AuthCancelled(scope.audit.into()));
     };
     validate_required(provider, &fields)?;
     let candidate = exec::interpolate_environment(&templates, &fields);
     persist_credentials(provider, paths, &fields)?;
     record_success(paths);
-    audit::log(root, audit_scope, "session-refreshed", "-", "");
+    audit::log(root, scope.audit, "session-refreshed", "-", "");
     Ok(candidate)
 }
 

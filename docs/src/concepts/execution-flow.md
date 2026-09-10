@@ -32,6 +32,8 @@ A duração continua editável no campo em minutos, mas ao lado dele há botões
 
 No editor, os tokens fixos e variáveis ficam em grupos rotulados e um marcador explícito lembra que qualquer prefixo aceita também argumentos futuros. Um resumo destacado acompanha o estado logo acima das ações. **Negar** mostra brevemente o resultado em coral; **Permitir** mostra em verde a autorização única ou sua duração antes de prosseguir. O botão de permissão permanece desabilitado até o operador confirmar que revisou invocação, target e escopo. A janela acompanha a altura do corpo: quando as pílulas de argumento ocupam várias linhas, ela cresce até o limite máximo e, a partir dele, o corpo rola — os controles de escopo e duração nunca ficam sob as ações.
 
+As três janelas — autorização de operação, autorização de target e autenticação — desenham a própria barra de título: arrastar move a janela, o `✕` equivale a negar e o botão de dobrar encolhe a janela até a altura da barra, preservando largura e posição. Dobrada, a barra carrega as ações primárias da janela: o mesmo botão de segurar por 1 segundo para permitir, os botões de substituir e adicionar o target, ou colar e validar as credenciais. Os gestos de segurar não são afrouxados ali — adicionar continua exigindo 1 segundo quando deixaria vários targets ativos: uma janela estacionada não vira aprovação de um clique. Qualquer ação rápida desdobra a janela, e as ações rápidas só aceitam clique depois que o botão do mouse que dobrou a janela é solto.
+
 Esse feedback visual não muda a ordem de segurança: deny explícito nunca abre a janela, e autenticação só começa depois que uma decisão não explícita foi permitida.
 
 ## 3. Ambiente e sessão

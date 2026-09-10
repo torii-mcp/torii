@@ -96,7 +96,11 @@ impl Invoker {
             auth_provider,
             auth_paths,
             auth_lock,
-            &auth_provider.config.name,
+            session::SessionScope {
+                audit: &auth_provider.config.name,
+                // Only a target invocation has something to disambiguate.
+                requested_for: scope.target.as_ref().map(|_| scope.audit_scope.as_str()),
+            },
             session::SessionEnvironment {
                 persistent_env: &idp_env,
                 removed_env,

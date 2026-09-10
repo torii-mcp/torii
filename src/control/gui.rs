@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 use eframe::egui;
 use serde::{Deserialize, Serialize};
 
+use super::chrome::{self, ChromeEvent, WindowState, TITLE_BAR_HEIGHT};
 use super::{
     AccessChoice, ActiveTargetAuthorization, AuthPromptResult, AuthValidation, GrantSelection,
     PermanentPolicy, TargetAccessChoice,
@@ -37,6 +38,10 @@ enum PromptRequest {
     },
     Auth {
         provider: String,
+        /// The provider target these credentials are being asked for, when the
+        /// invocation named one. Two prompts for the same identity provider are
+        /// otherwise indistinguishable.
+        target: Option<String>,
         fields: Vec<AuthField>,
         error: Option<String>,
         validation: AuthValidation,
@@ -100,12 +105,14 @@ pub async fn ask_target_access(
 
 pub async fn ask_auth(
     provider: &str,
+    target: Option<&str>,
     fields: &[AuthField],
     error: Option<&str>,
     validation: AuthValidation,
 ) -> Result<AuthPromptResult> {
     let request = PromptRequest::Auth {
         provider: provider.into(),
+        target: target.map(str::to_owned),
         fields: fields.to_vec(),
         error: error.map(str::to_owned),
         validation,
@@ -197,11 +204,13 @@ pub fn run_child() -> i32 {
         }
         Ok(PromptRequest::Auth {
             provider,
+            target,
             fields,
             error,
             validation,
         }) => {
-            let response = PromptResponse::Auth(auth_window(provider, fields, error, validation));
+            let response =
+                PromptResponse::Auth(auth_window(provider, target, fields, error, validation));
             if serde_json::to_writer(std::io::stdout(), &response).is_ok() {
                 0
             } else {
@@ -225,6 +234,9 @@ fn native_options(width: f32, height: f32) -> eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([width, height])
             .with_icon(prompt_icon())
+            // The title bar is drawn by Torii (see `super::chrome`): it carries
+            // the collapse toggle and the window's quick actions.
+            .with_decorations(false)
             .with_resizable(false)
             .with_minimize_button(false)
             .with_maximize_button(false)
@@ -446,6 +458,8 @@ struct AccessApp {
     /// Total height the body asked for on the last frame, chrome included.
     measured_height: Option<f32>,
     decision_since: Option<Instant>,
+    /// Collapsed to the title bar, with the hold-to-allow button still in it.
+    window: WindowState,
     outcome: Rc<RefCell<Option<AccessChoice>>>,
 }
 
@@ -465,6 +479,37 @@ impl eframe::App for AccessApp {
             }
         }
         let decided = decision.is_some();
+
+        chrome::paint_border(ctx);
+        let mut confirmed_from_bar = false;
+        let collapsed = self.window.collapsed();
+        let armed = self.window.quick_actions_armed(ctx);
+        let title = self.title();
+        let event = chrome::title_bar(ctx, &title, collapsed, armed, |ui| {
+            // The collapsed bar keeps the same press-and-hold gate as the
+            // window: a parked prompt must not become a one-click approval.
+            if self.hold_to_allow(ui, ctx, decided, true) {
+                confirmed_from_bar = true;
+            }
+        });
+        match event {
+            ChromeEvent::Close if !decided => {
+                self.finish_decision(ctx, AccessChoice::Deny);
+                return;
+            }
+            ChromeEvent::Close => return,
+            ChromeEvent::Toggle => self.window.toggle(),
+            ChromeEvent::None => {}
+        }
+        if confirmed_from_bar {
+            // Restore the window so the decision it just took is readable.
+            self.window.expand();
+            self.confirm_allow(ctx);
+        }
+        if self.window.collapsed() {
+            egui::CentralPanel::default().show(ctx, |_| {});
+            return;
+        }
 
         egui::TopBottomPanel::bottom("access_status")
             .resizable(false)
@@ -543,62 +588,8 @@ impl eframe::App for AccessApp {
                             self.finish_decision(ctx, AccessChoice::Deny);
                         }
                     });
-                    // Press-and-hold to confirm: the deliberate gesture replaces
-                    // the old "I reviewed this" checkbox as the confirmation gate.
-                    let label = if self.timed {
-                        format!("Segure para permitir por {}", spelled_duration(self.seconds))
-                    } else {
-                        "Segure para permitir uma vez".to_string()
-                    };
-                    let slots = reserve_hold_paint(ui);
-                    let response = ui
-                        .add_enabled(
-                            !decided,
-                            egui::Button::new(&label)
-                                .fill(egui::Color32::TRANSPARENT)
-                                .min_size(egui::vec2(
-                                    ALLOW_HOLD_BUTTON_WIDTH,
-                                    ui.spacing().interact_size.y,
-                                ))
-                                .sense(egui::Sense::click_and_drag()),
-                        )
-                        .on_hover_text(
-                            "Mantenha pressionado por 1 segundo para revisar e confirmar a permissão.",
-                        );
-                    let (pointer_down, focused) =
-                        ctx.input(|input| (input.pointer.primary_down(), input.focused));
-                    let pressing = !decided
-                        && response.is_pointer_button_down_on()
-                        && response.contains_pointer();
-                    let (progress, confirmed) = hold_update(
-                        &mut self.hold,
-                        pressing,
-                        pointer_down,
-                        focused,
-                        Instant::now(),
-                    );
-                    paint_hold_bar(ui, &slots, &response, progress, HOLD_PROGRESS_BG);
-                    if pressing {
-                        ctx.request_repaint_after(Duration::from_millis(16));
-                    }
-                    if confirmed {
-                        self.finish_decision(
-                            ctx,
-                            if self.timed {
-                                AccessChoice::AllowFor {
-                                    seconds: self.seconds,
-                                    selection: if self.prefix {
-                                        GrantSelection::Prefix {
-                                            token_count: self.prefix_len,
-                                        }
-                                    } else {
-                                        GrantSelection::Exact
-                                    },
-                                }
-                            } else {
-                                AccessChoice::AllowOnce
-                            },
-                        );
+                    if self.hold_to_allow(ui, ctx, decided, false) {
+                        self.confirm_allow(ctx);
                     }
                 });
             });
@@ -640,6 +631,86 @@ impl eframe::App for AccessApp {
 }
 
 impl AccessApp {
+    /// What the title bar says: the scope decides which prompt this is when
+    /// several are open at once.
+    fn title(&self) -> String {
+        format!("{} · Torii — autorização", self.provider)
+    }
+
+    /// The press-and-hold approval button, in the actions row or, `compact`,
+    /// in the collapsed title bar. Returns whether the hold completed.
+    fn hold_to_allow(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &egui::Context,
+        decided: bool,
+        compact: bool,
+    ) -> bool {
+        // Press-and-hold to confirm: the deliberate gesture replaces
+        // the old "I reviewed this" checkbox as the confirmation gate.
+        let label = if self.timed {
+            format!(
+                "Segure para permitir por {}",
+                spelled_duration(self.seconds)
+            )
+        } else {
+            "Segure para permitir uma vez".to_string()
+        };
+        let slots = reserve_hold_paint(ui);
+        let mut response = ui.add_enabled(
+            !decided,
+            egui::Button::new(&label)
+                .fill(egui::Color32::TRANSPARENT)
+                .min_size(egui::vec2(
+                    ALLOW_HOLD_BUTTON_WIDTH,
+                    ui.spacing().interact_size.y,
+                ))
+                .sense(egui::Sense::click_and_drag()),
+        );
+        // Folded, the tooltip would land back over the button and swallow the
+        // press it is describing.
+        if !compact {
+            response = response.on_hover_text(
+                "Mantenha pressionado por 1 segundo para revisar e confirmar a permissão.",
+            );
+        }
+        let (pointer_down, focused) =
+            ctx.input(|input| (input.pointer.primary_down(), input.focused));
+        let pressing =
+            !decided && response.is_pointer_button_down_on() && response.contains_pointer();
+        let (progress, confirmed) = hold_update(
+            &mut self.hold,
+            pressing,
+            pointer_down,
+            focused,
+            Instant::now(),
+        );
+        paint_hold_bar(ui, &slots, &response, progress, HOLD_PROGRESS_BG);
+        if pressing {
+            ctx.request_repaint_after(Duration::from_millis(16));
+        }
+        confirmed
+    }
+
+    /// Record the approval the hold gesture just confirmed.
+    fn confirm_allow(&mut self, ctx: &egui::Context) {
+        let choice = if self.timed {
+            AccessChoice::AllowFor {
+                seconds: self.seconds,
+                selection: if self.prefix {
+                    GrantSelection::Prefix {
+                        token_count: self.prefix_len,
+                    }
+                } else {
+                    GrantSelection::Exact
+                },
+            }
+        } else {
+            AccessChoice::AllowOnce
+        };
+        self.finish_decision(ctx, choice);
+    }
+
     /// What the call is, how it may be authorized, and for how long.
     fn render_body(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, decided: bool) {
         ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
@@ -911,7 +982,21 @@ impl AccessApp {
         );
         if (self.requested_height - desired).abs() > ACCESS_HEIGHT_TOLERANCE {
             self.requested_height = desired;
-            self.pending_height = Some(desired);
+            self.window.set_expanded_height(desired);
+            // Collapsed, the flow height is only remembered: it is applied when
+            // the window is restored.
+            if !self.window.collapsed() {
+                self.pending_height = Some(desired);
+            }
+        }
+        // Folding keeps the top-left corner where it is; a flow change keeps
+        // the window centred on itself.
+        if self.window.apply(ctx) {
+            self.pending_height = None;
+            return;
+        }
+        if self.window.collapsed() {
+            return;
         }
         if let Some(height) = self.pending_height {
             if request_access_height(ctx, height) {
@@ -1351,6 +1436,7 @@ fn access_window(
                 pending_height: None,
                 measured_height: None,
                 decision_since: None,
+                window: WindowState::new(ACCESS_ONCE_HEIGHT),
                 outcome: result,
             }))
         }),
@@ -1404,6 +1490,7 @@ struct TargetAccessApp {
     minutes: u32,
     add_hold: HoldState,
     decision_since: Option<Instant>,
+    window: WindowState,
     outcome: Rc<RefCell<Option<TargetAccessChoice>>>,
 }
 
@@ -1423,6 +1510,61 @@ impl eframe::App for TargetAccessApp {
         let active_after_add =
             active_target_count_after_add(&self.active_targets, &self.requested_target, now);
         let add_creates_multiple = active_after_add > 1;
+        let no_active = self.active_targets.is_empty();
+
+        self.window.apply(ctx);
+        chrome::paint_border(ctx);
+        let mut quick_replace = false;
+        let label = if no_active {
+            format!("Autorizar por {} min", self.minutes)
+        } else {
+            format!("Substituir por {} min", self.minutes)
+        };
+        let mut quick_add = false;
+        let armed = self.window.quick_actions_armed(ctx);
+        let title = format!("{} · Torii — target", self.requested_target);
+        let collapsed = self.window.collapsed();
+        let event = chrome::title_bar(ctx, &title, collapsed, armed, |ui| {
+            if ui.add_enabled(!decided, egui::Button::new(label)).clicked() {
+                quick_replace = true;
+            }
+            // Add keeps its own gate here too: preserving the current targets
+            // is the choice that can leave several of them authorized at once.
+            if !no_active && self.add_action(ui, ctx, decided, add_creates_multiple, true) {
+                quick_add = true;
+            }
+        });
+        match event {
+            ChromeEvent::Close if !decided => {
+                self.finish_decision(ctx, TargetAccessChoice::Deny);
+                return;
+            }
+            ChromeEvent::Close => return,
+            ChromeEvent::Toggle => self.window.toggle(),
+            ChromeEvent::None => {}
+        }
+        if quick_replace {
+            self.window.expand();
+            self.finish_decision(
+                ctx,
+                TargetAccessChoice::Replace {
+                    minutes: self.minutes,
+                },
+            );
+        }
+        if quick_add {
+            self.window.expand();
+            self.finish_decision(
+                ctx,
+                TargetAccessChoice::Add {
+                    minutes: self.minutes,
+                },
+            );
+        }
+        if self.window.collapsed() {
+            egui::CentralPanel::default().show(ctx, |_| {});
+            return;
+        }
 
         egui::TopBottomPanel::bottom("target_access_status")
             .resizable(false)
@@ -1474,79 +1616,20 @@ impl eframe::App for TargetAccessApp {
                     // With nothing active, "replace" and "add" collapse into a
                     // single "authorize" action, so the Add button is hidden and
                     // the remaining button is relabelled.
-                    let no_active = self.active_targets.is_empty();
                     ui.add_enabled_ui(!decided, |ui| {
                         if ui.button("Negar").clicked() {
                             self.finish_decision(ctx, TargetAccessChoice::Deny);
                         }
                     });
-                    if !no_active {
-                        if add_creates_multiple {
-                            let label = "Segure para adicionar";
-                            let slots = reserve_hold_paint(ui);
-                            let response = ui
-                                .add_enabled(
-                                    !decided,
-                                    egui::Button::new(label)
-                                        .fill(egui::Color32::TRANSPARENT)
-                                        .min_size(egui::vec2(
-                                            TARGET_ADD_BUTTON_WIDTH,
-                                            ui.spacing().interact_size.y,
-                                        ))
-                                        .sense(egui::Sense::click_and_drag()),
-                                )
-                                .on_hover_text(
-                                    "Mantenha pressionado por 1 segundo para preservar os targets atuais e autorizar também o solicitado.",
-                                );
-                            let (pointer_down, focused) =
-                                ctx.input(|input| (input.pointer.primary_down(), input.focused));
-                            let pressing = !decided
-                                && response.is_pointer_button_down_on()
-                                && response.contains_pointer();
-                            let (progress, confirmed) = hold_update(
-                                &mut self.add_hold,
-                                pressing,
-                                pointer_down,
-                                focused,
-                                Instant::now(),
-                            );
-                            paint_hold_bar(ui, &slots, &response, progress, HOLD_PROGRESS_BG);
-                            if pressing {
-                                ctx.request_repaint_after(Duration::from_millis(16));
-                            }
-                            if confirmed {
-                                self.finish_decision(
-                                    ctx,
-                                    TargetAccessChoice::Add {
-                                        minutes: self.minutes,
-                                    },
-                                );
-                            }
-                        } else {
-                            self.add_hold = HoldState::default();
-                            if ui
-                                .add_enabled(
-                                    !decided,
-                                    egui::Button::new(format!(
-                                        "Adicionar por {} min",
-                                        self.minutes
-                                    )),
-                                )
-                                .on_hover_text(
-                                    "Autoriza o target solicitado sem desativar autorizações existentes.",
-                                )
-                                .clicked()
-                            {
-                                self.finish_decision(
-                                    ctx,
-                                    TargetAccessChoice::Add {
-                                        minutes: self.minutes,
-                                    },
-                                );
-                            }
-                        }
-                    } else {
+                    if no_active {
                         self.add_hold = HoldState::default();
+                    } else if self.add_action(ui, ctx, decided, add_creates_multiple, false) {
+                        self.finish_decision(
+                            ctx,
+                            TargetAccessChoice::Add {
+                                minutes: self.minutes,
+                            },
+                        );
                     }
                     ui.add_enabled_ui(!decided, |ui| {
                         let (label, hover) = if no_active {
@@ -1691,6 +1774,69 @@ impl eframe::App for TargetAccessApp {
 }
 
 impl TargetAccessApp {
+    /// The Add action, in the actions row or, `compact`, in the folded title
+    /// bar. When adding would leave several targets authorized at once it is
+    /// gated by the same one-second hold in both places: the folded window is
+    /// a parked prompt, not a shortcut past the gesture. Returns whether the
+    /// human confirmed it.
+    fn add_action(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &egui::Context,
+        decided: bool,
+        hold_required: bool,
+        compact: bool,
+    ) -> bool {
+        if !hold_required {
+            self.add_hold = HoldState::default();
+            let button = ui.add_enabled(
+                !decided,
+                egui::Button::new(format!("Adicionar por {} min", self.minutes)),
+            );
+            let button = if compact {
+                button
+            } else {
+                button.on_hover_text(
+                    "Autoriza o target solicitado sem desativar autorizações existentes.",
+                )
+            };
+            return button.clicked();
+        }
+        let slots = reserve_hold_paint(ui);
+        let mut response = ui.add_enabled(
+            !decided,
+            egui::Button::new("Segure para adicionar")
+                .fill(egui::Color32::TRANSPARENT)
+                .min_size(egui::vec2(
+                    TARGET_ADD_BUTTON_WIDTH,
+                    ui.spacing().interact_size.y,
+                ))
+                .sense(egui::Sense::click_and_drag()),
+        );
+        // Folded, the tooltip would cover the button it describes.
+        if !compact {
+            response = response.on_hover_text(
+                "Mantenha pressionado por 1 segundo para preservar os targets atuais e autorizar também o solicitado.",
+            );
+        }
+        let (pointer_down, focused) =
+            ctx.input(|input| (input.pointer.primary_down(), input.focused));
+        let pressing =
+            !decided && response.is_pointer_button_down_on() && response.contains_pointer();
+        let (progress, confirmed) = hold_update(
+            &mut self.add_hold,
+            pressing,
+            pointer_down,
+            focused,
+            Instant::now(),
+        );
+        paint_hold_bar(ui, &slots, &response, progress, HOLD_PROGRESS_BG);
+        if pressing {
+            ctx.request_repaint_after(Duration::from_millis(16));
+        }
+        confirmed
+    }
+
     fn finish_decision(&mut self, ctx: &egui::Context, decision: TargetAccessChoice) {
         self.add_hold = HoldState::default();
         *self.outcome.borrow_mut() = Some(decision);
@@ -1721,6 +1867,7 @@ fn target_access_window(
                 minutes: default_minutes.clamp(1, 1440),
                 add_hold: HoldState::default(),
                 decision_since: None,
+                window: WindowState::new(height),
                 outcome: result,
             }))
         }),
@@ -1737,7 +1884,8 @@ fn target_access_window_height(active_count: usize) -> f32 {
     };
     (TARGET_ACCESS_MIN_HEIGHT
         + active_count.min(6) as f32 * TARGET_ACCESS_ACTIVE_ROW_HEIGHT
-        + warning_height)
+        + warning_height
+        + TITLE_BAR_HEIGHT)
         .min(TARGET_ACCESS_MAX_HEIGHT)
 }
 
@@ -1903,6 +2051,9 @@ fn target_expiration_label(expires_at_epoch: u64, now: u64) -> String {
 
 struct AuthApp {
     provider: String,
+    /// The provider target these credentials are for, when there is one.
+    target: Option<String>,
+    window: WindowState,
     fields: Vec<AuthField>,
     values: HashMap<String, String>,
     error: Option<String>,
@@ -1921,6 +2072,13 @@ enum AuthValidationOutcome {
 }
 
 const AUTH_MULTILINE_INPUT_HEIGHT: f32 = 72.0;
+const AUTH_SCOPE_SUMMARY_HEIGHT: f32 = 26.0;
+/// One label per action, so a button reads the same in the form and in the
+/// folded title bar.
+/// Wide enough for the two paste labels plus the title in the folded bar.
+const AUTH_WINDOW_WIDTH: f32 = 760.0;
+const PASTE_LABEL: &str = "Colar atribuições do clipboard";
+const PASTE_AND_VALIDATE_LABEL: &str = "Colar atribuições do clipboard e validar";
 const PROMPT_ACTIONS_HEIGHT: f32 = 32.0;
 const PROMPT_STATUS_BAR_HEIGHT: f32 = 24.0;
 const PROMPT_ERROR_COLOR: egui::Color32 = egui::Color32::from_rgb(224, 108, 117);
@@ -1936,6 +2094,43 @@ impl eframe::App for AuthApp {
         let busy = validating || succeeded;
         if validating {
             ctx.set_cursor_icon(egui::CursorIcon::Wait);
+        }
+
+        self.window.apply(ctx);
+        chrome::paint_border(ctx);
+        let mut quick = AuthQuickAction::None;
+        let armed = self.window.quick_actions_armed(ctx);
+        let event = chrome::title_bar(ctx, &self.title(), self.window.collapsed(), armed, |ui| {
+            ui.add_enabled_ui(!busy, |ui| {
+                if ui.button(PASTE_AND_VALIDATE_LABEL).clicked() {
+                    quick = AuthQuickAction::PasteAndValidate;
+                }
+                if ui.button(PASTE_LABEL).clicked() {
+                    quick = AuthQuickAction::Paste;
+                }
+            });
+        });
+        match event {
+            ChromeEvent::Close if !succeeded => {
+                close(ctx);
+                return;
+            }
+            ChromeEvent::Close => return,
+            ChromeEvent::Toggle => self.window.toggle(),
+            ChromeEvent::None => {}
+        }
+        if quick != AuthQuickAction::None {
+            self.paste_clipboard();
+            self.window.expand();
+            if quick == AuthQuickAction::PasteAndValidate {
+                self.start_validation(ctx);
+            }
+        }
+        if self.window.collapsed() {
+            // Nothing but the bar is visible; the body would only be laid out
+            // to be clipped away.
+            egui::CentralPanel::default().show(ctx, |_| {});
+            return;
         }
 
         egui::TopBottomPanel::bottom("auth_status")
@@ -1987,6 +2182,31 @@ impl eframe::App for AuthApp {
                 });
             });
 
+        if let Some(target) = self.target.clone() {
+            // Several targets can share one identity provider, and their prompts
+            // are otherwise identical: name the target the credentials are for.
+            egui::TopBottomPanel::top("auth_scope_summary")
+                .resizable(false)
+                .exact_height(AUTH_SCOPE_SUMMARY_HEIGHT)
+                .show_separator_line(false)
+                .frame(
+                    egui::Frame::none()
+                        .fill(SCOPE_SUMMARY_BG)
+                        .inner_margin(egui::Margin::symmetric(8.0, 0.0)),
+                )
+                .show(ctx, |ui| {
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        ui.label(egui::RichText::new("Credenciais para o target").strong());
+                        ui.label(
+                            egui::RichText::new(target)
+                                .monospace()
+                                .strong()
+                                .color(BOUNDARY_ACCENT),
+                        );
+                    });
+                });
+        }
+
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.heading(format!("Torii — autenticação ({})", self.provider));
             ui.label("A nova sessão só substituirá a anterior após validação.");
@@ -2033,26 +2253,45 @@ impl eframe::App for AuthApp {
                         }
                     });
                 ui.add_space(1.0);
-                if ui.button("Colar atribuições do clipboard").clicked() {
-                    if let Ok(mut clipboard) = arboard::Clipboard::new() {
-                        if let Ok(text) = clipboard.get_text() {
-                            let allowed: Vec<String> =
-                                self.fields.iter().map(|field| field.name.clone()).collect();
-                            if let Ok(values) =
-                                crate::config::env_file::parse_allowed(&text, &allowed)
-                            {
-                                self.values.extend(values);
-                            }
-                        }
-                    }
-                    self.error = None;
+                if ui.button(PASTE_LABEL).clicked() {
+                    self.paste_clipboard();
                 }
             });
         });
     }
 }
 
+/// A quick action taken from the collapsed title bar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AuthQuickAction {
+    None,
+    Paste,
+    PasteAndValidate,
+}
+
 impl AuthApp {
+    /// What the title bar says: the target when there is one, since that is
+    /// what tells two open prompts apart.
+    fn title(&self) -> String {
+        match &self.target {
+            Some(target) => format!("{target} · Torii — autenticação ({})", self.provider),
+            None => format!("{} · Torii — autenticação", self.provider),
+        }
+    }
+
+    fn paste_clipboard(&mut self) {
+        if let Ok(mut clipboard) = arboard::Clipboard::new() {
+            if let Ok(text) = clipboard.get_text() {
+                let allowed: Vec<String> =
+                    self.fields.iter().map(|field| field.name.clone()).collect();
+                if let Ok(values) = crate::config::env_file::parse_allowed(&text, &allowed) {
+                    self.values.extend(values);
+                }
+            }
+        }
+        self.error = None;
+    }
+
     fn start_validation(&mut self, ctx: &egui::Context) {
         let missing: Vec<&str> = self
             .fields
@@ -2151,17 +2390,25 @@ fn auth_form_height(fields: &[AuthField]) -> f32 {
         .clamp(60.0, 280.0)
 }
 
-fn auth_window_height(fields: &[AuthField]) -> f32 {
-    (140.0 + auth_form_height(fields)).clamp(240.0, 460.0)
+/// Chrome above the form: the custom title bar, plus the target strip when the
+/// credentials belong to a target.
+fn auth_window_height(fields: &[AuthField], has_target: bool) -> f32 {
+    let strip = if has_target {
+        AUTH_SCOPE_SUMMARY_HEIGHT
+    } else {
+        0.0
+    };
+    (140.0 + auth_form_height(fields)).clamp(240.0, 460.0) + TITLE_BAR_HEIGHT + strip
 }
 
 fn auth_window(
     provider: String,
+    target: Option<String>,
     fields: Vec<AuthField>,
     error: Option<String>,
     validation: AuthValidation,
 ) -> AuthPromptResult {
-    let height = auth_window_height(&fields);
+    let height = auth_window_height(&fields, target.is_some());
     let form_height = auth_form_height(&fields);
     let outcome = Rc::new(RefCell::new(None));
     let result = Rc::clone(&outcome);
@@ -2169,10 +2416,12 @@ fn auth_window(
     let app_invalid_attempts = Rc::clone(&invalid_attempts);
     let _ = eframe::run_native(
         "Torii — autenticação",
-        native_options(620.0, height),
+        native_options(AUTH_WINDOW_WIDTH, height),
         Box::new(move |_| {
             Ok(Box::new(AuthApp {
                 provider,
+                target,
+                window: WindowState::new(height),
                 fields,
                 values: HashMap::new(),
                 error,
@@ -2232,6 +2481,7 @@ mod tests {
             pending_height: None,
             measured_height: None,
             decision_since: None,
+            window: WindowState::new(ACCESS_ONCE_HEIGHT),
             outcome: Rc::new(RefCell::new(None)),
         }
     }
@@ -2276,14 +2526,19 @@ mod tests {
 
     #[test]
     fn authentication_window_height_tracks_form_content_and_is_bounded() {
-        let compact = auth_window_height(&[field(false)]);
-        let aws_form = auth_window_height(&[field(false), field(false), field(true)]);
-        let large = auth_window_height(&vec![field(true); 12]);
+        let compact = auth_window_height(&[field(false)], false);
+        let aws_form = auth_window_height(&[field(false), field(false), field(true)], false);
+        let large = auth_window_height(&vec![field(true); 12], false);
 
-        assert_eq!(compact, 240.0);
-        assert!(aws_form < 340.0);
+        assert_eq!(compact, 240.0 + TITLE_BAR_HEIGHT);
+        assert!(aws_form < 340.0 + TITLE_BAR_HEIGHT);
         assert!(aws_form > compact);
-        assert_eq!(large, 420.0);
+        assert_eq!(large, 420.0 + TITLE_BAR_HEIGHT);
+        assert_eq!(
+            auth_window_height(&[field(false)], true),
+            compact + AUTH_SCOPE_SUMMARY_HEIGHT,
+            "the target strip belongs above the form, not inside its height"
+        );
     }
 
     #[test]
@@ -2480,18 +2735,21 @@ mod tests {
 
     #[test]
     fn target_access_window_height_is_bounded() {
-        assert_eq!(target_access_window_height(0), TARGET_ACCESS_MIN_HEIGHT);
+        assert_eq!(
+            target_access_window_height(0),
+            TARGET_ACCESS_MIN_HEIGHT + TITLE_BAR_HEIGHT
+        );
         assert_eq!(
             target_access_window_height(1),
             TARGET_ACCESS_MIN_HEIGHT
                 + TARGET_ACCESS_ACTIVE_ROW_HEIGHT
                 + TARGET_ACCESS_WARNING_HEIGHT
+                + TITLE_BAR_HEIGHT
         );
         assert_eq!(
             target_access_window_height(100),
-            TARGET_ACCESS_MIN_HEIGHT
-                + 6.0 * TARGET_ACCESS_ACTIVE_ROW_HEIGHT
-                + TARGET_ACCESS_WARNING_HEIGHT
+            TARGET_ACCESS_MAX_HEIGHT,
+            "the cap covers the title bar too, so the window still fits"
         );
         assert!(target_access_window_height(100) <= TARGET_ACCESS_MAX_HEIGHT);
     }

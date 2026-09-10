@@ -647,7 +647,10 @@ async fn reauth(paths: &ConfigPaths, tool: &str, target_name: Option<&String>) -
         &auth_provider,
         &auth_paths,
         auth_lock.as_ref(),
-        &audit_scope,
+        session::SessionScope {
+            audit: &audit_scope,
+            requested_for: provider.uses_targets().then_some(audit_scope.as_str()),
+        },
         session::SessionEnvironment {
             persistent_env: &persistent,
             removed_env: &removed_env,

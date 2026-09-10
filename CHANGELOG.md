@@ -4,6 +4,29 @@ Todas as mudanças relevantes deste projeto são registradas aqui. O formato seg
 [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e o versionamento é
 [semântico](https://semver.org/lang/pt-BR/).
 
+## [Não publicado]
+
+### Adicionado
+
+- A janela de autenticação identifica o target: o título traz `provider/target` e uma faixa
+  destacada acima do formulário repete para qual target aquelas credenciais vão servir. Vários
+  targets podem compartilhar o mesmo provider de identidade, e duas janelas abertas ao mesmo
+  tempo eram indistinguíveis — só o nome do provider aparecia.
+- As três janelas de prompt desenham a própria barra de título, com um botão que dobra a janela
+  até a altura da barra, preservando largura e posição. Dobrada, a barra carrega a ação primária
+  da janela: segurar para permitir, substituir ou adicionar o target, ou `Colar` /
+  `Colar e validar` as credenciais. Qualquer uma delas desdobra a janela. Os gestos de segurar
+  por 1 segundo — permitir a operação e adicionar um target ao conjunto ativo — continuam
+  valendo na barra: uma janela estacionada não vira aprovação de um clique. Cada botão traz na
+  barra exatamente o rótulo que tem na janela aberta, e dobrada a barra não mostra dicas de
+  hover: com uma janela de uma barra de altura, o balão voltaria por cima do próprio botão e
+  engoliria o clique. O título começa pelo escopo (`aws/prd · Torii — …`), que é o que precisa
+  sobreviver ao truncamento.
+- As ações rápidas da barra dobrada só aparecem depois que o botão do mouse que dobrou a janela
+  é solto, e todos os botões da barra têm id estável. O egui atribui a pressão ao widget que
+  ocupa a posição na hierarquia, então sem isso o clique que dobra a janela poderia ser herdado
+  pela ação que aparece no lugar do botão.
+
 ## [0.4.0] — 2026-09-04
 
 ### Adicionado
