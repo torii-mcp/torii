@@ -286,6 +286,39 @@ fn create_with_copy_shared_seeds_from_the_provider_policy() {
     assert!(written.contains("seguem separadas"), "{written}");
 }
 
+/// Criar é o pedido em si: fechar o editor sem mexer no rascunho grava o arquivo
+/// novo do mesmo jeito. Descartá-lo deixaria o alias usando a compartilhada, e o
+/// humano acharia que criou uma política.
+#[test]
+fn creating_writes_the_file_even_when_the_editor_touches_nothing() {
+    let config = TempDir::new().unwrap();
+    let scripts = TempDir::new().unwrap();
+    write_targeted_provider(&config);
+    let editor = noop_editor(&scripts);
+
+    let output = edit(
+        &config,
+        &editor,
+        &["aws", "hml", "--create", "--copy-shared"],
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("created at"), "{stderr}");
+    assert!(!stderr.contains("was not changed"), "{stderr}");
+    let written = target_rules_of(&config);
+    assert!(written.contains("ec2 describe-instances"), "{written}");
+
+    // Já existindo, fechar sem mexer volta a significar desistir.
+    let again = edit(&config, &editor, &["aws", "hml"]);
+    assert!(again.status.success());
+    let stderr = String::from_utf8_lossy(&again.stderr);
+    assert!(stderr.contains("was not changed"), "{stderr}");
+}
+
 /// A flag diz *como* criar; sozinha ela não tem o que fazer.
 #[test]
 fn copy_shared_requires_create() {

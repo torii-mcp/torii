@@ -386,12 +386,17 @@ pub fn edit(
         (false, None) => return Err(Error::RulesNotFound(path)),
     };
 
+    // Editando uma política que já existe, fechar o editor sem mexer significa
+    // desistir. Criando uma que não existe, não: o arquivo novo é a mudança, e o
+    // humano pediu por ele na linha de comando. Descartá-lo aqui deixaria o alias
+    // usando a compartilhada sem nenhum aviso de que nada foi criado.
+    let creating = !path.exists();
     let draft = write_draft(tool, target, &original)?;
 
     let edited = loop {
         launch_editor(&draft)?;
         let edited = read_text(&draft)?;
-        if edited == original {
+        if edited == original && !creating {
             eprintln!("{scope} was not changed.");
             return Ok(());
         }
@@ -415,7 +420,11 @@ pub fn edit(
 
     let text = read_text(&draft)?;
     write_atomic(&path, &text)?;
-    eprintln!("{scope} updated at {}.", path.display());
+    if creating {
+        eprintln!("{scope} created at {}.", path.display());
+    } else {
+        eprintln!("{scope} updated at {}.", path.display());
+    }
     eprintln!(
         "{} deny and {} accept rule(s) are active. Rules are reread on every call, so the MCP server does not need a restart.",
         edited.deny.len(),
