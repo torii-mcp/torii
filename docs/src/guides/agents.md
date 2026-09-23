@@ -20,9 +20,12 @@ Nem todo cliente oferece as duas metades da integração. O hook depende de o cl
 |---|---|---|
 | `codex`, `claude`, `gemini`, `cursor`, `antigravity` | sim | sim |
 | `opencode`, `copilot`, `copilot-cli` | sim | não existe no cliente |
+| `kiro` | sim | existe no cliente, mas o Torii não gerencia |
 | `pi` | somente através de uma extensão MCP instalada por você | não implementado pelo Torii |
 
-Para os adapters sem hook, `--hook` é recusado antes de qualquer escrita, e `agent status` informa `hook not supported`. Isso não é uma limitação do Torii: aqueles clientes não expõem um ponto de interceptação equivalente, então o Torii não pode prometer bloquear a chamada direta ao `aws` ou ao `kubectl` neles.
+Para os adapters sem hook, `--hook` é recusado antes de qualquer escrita, e `agent status` informa `hook not managed by Torii`. Em `opencode`, `copilot` e `copilot-cli` isso não é uma limitação do Torii: aqueles clientes não expõem um ponto de interceptação equivalente, então o Torii não pode prometer bloquear a chamada direta ao `aws` ou ao `kubectl` neles.
+
+O Kiro é o caso diferente: ele tem `PreToolUse` bloqueável, mas declarado em arquivos `.kiro.hook` por workspace, e não na configuração global que o `agent install` gerencia. O Torii instala só o MCP ali; se você quiser a fronteira também no Kiro, escreva o hook do workspace à mão.
 
 A configuração fixa o caminho absoluto do executável Torii e o `TORII_CONFIG_DIR` usado durante a instalação. Reinicie o cliente para carregar a alteração.
 

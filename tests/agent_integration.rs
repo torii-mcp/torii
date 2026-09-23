@@ -259,7 +259,7 @@ fn codex_install_status_and_uninstall_work_in_an_isolated_home() {
 }
 
 /// Cada agente sem hook tem sua própria variável de home, arquivo e chave de servidores.
-fn mcp_only_agents() -> [(&'static str, &'static str, &'static str, &'static str); 4] {
+fn mcp_only_agents() -> [(&'static str, &'static str, &'static str, &'static str); 5] {
     [
         ("opencode", "TORII_OPENCODE_HOME", "opencode.json", "mcp"),
         ("copilot", "TORII_COPILOT_HOME", "mcp.json", "servers"),
@@ -269,6 +269,7 @@ fn mcp_only_agents() -> [(&'static str, &'static str, &'static str, &'static str
             "mcp-config.json",
             "mcpServers",
         ),
+        ("kiro", "TORII_KIRO_HOME", "mcp.json", "mcpServers"),
         ("pi", "TORII_PI_HOME", "mcp.json", "mcpServers"),
     ]
 }
@@ -337,7 +338,10 @@ fn mcp_only_agents_install_in_their_native_shape_and_preserve_config() {
             stdout.contains("mcp\tinstalled (managed by Torii)"),
             "{agent}: {stdout}"
         );
-        assert!(stdout.contains("hook\tnot supported"), "{agent}: {stdout}");
+        assert!(
+            stdout.contains("hook\tnot managed by Torii"),
+            "{agent}: {stdout}"
+        );
 
         let uninstall = torii()
             .env("TORII_CONFIG_DIR", config.path())
@@ -371,7 +375,7 @@ fn mcp_only_agents_reject_the_hook_and_pi_requires_confirmation() {
         assert!(!hook.status.success(), "{agent} must reject --hook");
         let stderr = String::from_utf8_lossy(&hook.stderr);
         assert!(
-            stderr.contains("does not offer a pre-execution hook"),
+            stderr.contains("does not manage a pre-execution hook"),
             "{agent}: {stderr}"
         );
         // Recusar --hook não pode deixar configuração pela metade.

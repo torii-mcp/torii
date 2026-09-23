@@ -63,6 +63,7 @@ async fn run_async(args: Vec<String>) -> Result<i32> {
             println!("opencode\tMCP only; opencode has no pre-execution hook");
             println!("copilot\tMCP only; GitHub Copilot in VS Code has no pre-execution hook");
             println!("copilot-cli\tMCP only; GitHub Copilot CLI has no pre-execution hook");
+            println!("kiro\tMCP only; Torii does not manage Kiro workspace hooks");
             println!("pi\tMCP only, and pi needs an MCP extension to read it");
             Ok(0)
         }
@@ -348,6 +349,7 @@ fn is_portable_agent(agent: &str) -> bool {
             | "opencode"
             | "copilot"
             | "copilot-cli"
+            | "kiro"
             | "pi"
     )
 }
@@ -448,7 +450,7 @@ fn help_text(command: &[String]) -> Option<&'static str> {
         ["target", "list"] => Some("Usage:\n  torii target list <provider-tool>\n\nLists aliases and their fixed bindings in the human control plane."),
         ["target", "show"] => Some("Usage:\n  torii target show <provider-tool> <name>\n\nPrints the target configuration."),
         ["target", "remove"] => Some("Usage:\n  torii target remove <provider-tool> <name> --force\n\nRevokes the target authorization and removes the target and its isolated state. `--force` is required."),
-        ["agent"] => Some("Usage:\n  torii agent <command>\n\nCommands:\n  list\n  install <agent> [--hook] [--yes]\n  status <agent>\n  uninstall <agent> [--hook]\n\n<agent> is codex, claude, gemini, cursor, antigravity, opencode, copilot, copilot-cli, or pi. Run `torii agent list` for what each adapter supports. The optional hook redirects direct provider CLI attempts to the corresponding MCP tool and exists only for agents that offer a pre-execution hook."),
+        ["agent"] => Some("Usage:\n  torii agent <command>\n\nCommands:\n  list\n  install <agent> [--hook] [--yes]\n  status <agent>\n  uninstall <agent> [--hook]\n\n<agent> is codex, claude, gemini, cursor, antigravity, opencode, copilot, copilot-cli, kiro, or pi. Run `torii agent list` for what each adapter supports. The optional hook redirects direct provider CLI attempts to the corresponding MCP tool and exists only for agents whose pre-execution hook Torii manages."),
         ["self"] | ["self", "upgrade"] => Some("Usage:
   torii self upgrade [--check]
 

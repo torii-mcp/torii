@@ -27,7 +27,7 @@ struct Spec {
     mcp_path: PathBuf,
     /// Chave de objeto que o agente usa para declarar servidores MCP.
     mcp_key: &'static str,
-    /// Ausente quando o agente não oferece interceptação antes da execução.
+    /// Ausente quando o Torii não gerencia interceptação antes da execução naquele agente.
     hook: Option<HookSpec>,
 }
 
@@ -52,7 +52,7 @@ impl Spec {
     fn hook(&self) -> Result<&HookSpec> {
         self.hook.as_ref().ok_or_else(|| {
             Error::Agent(format!(
-                "{} does not offer a pre-execution hook, so Torii cannot block direct provider calls there; install the MCP integration without --hook",
+                "Torii does not manage a pre-execution hook for {}, so it cannot block direct provider calls there; install the MCP integration without --hook",
                 self.display_name
             ))
         })
@@ -150,7 +150,7 @@ pub fn print_status(paths: &ConfigPaths, agent: &str) -> Result<()> {
     println!("config_home\t{}", spec.config_home.display());
     println!("mcp\t{}", status_label(mcp_entry.is_some(), mcp_managed));
     if spec.hook.is_none() {
-        println!("hook\tnot supported by {}", spec.display_name);
+        println!("hook\tnot managed by Torii for {}", spec.display_name);
     } else {
         println!("hook\t{}", status_label(hook_entry.is_some(), hook_managed));
     }
@@ -169,7 +169,7 @@ pub fn uninstall(paths: &ConfigPaths, agent: &str, hook_only: bool) -> Result<()
 
     if hook_only && spec.hook.is_none() {
         return Err(Error::Agent(format!(
-            "{} has no Torii hook to remove: that agent does not offer a pre-execution hook",
+            "{} has no Torii hook to remove: Torii does not manage a pre-execution hook for that agent",
             spec.display_name
         )));
     }
@@ -342,6 +342,10 @@ fn spec(agent: &str) -> Result<Spec> {
             .filter(|value| !value.is_empty())
             .map(PathBuf::from)
             .unwrap_or_else(|| home.join(".gemini").join("config")),
+        "kiro" => std::env::var_os("TORII_KIRO_HOME")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join(".kiro").join("settings")),
         "pi" => std::env::var_os("TORII_PI_HOME")
             .filter(|value| !value.is_empty())
             .map(PathBuf::from)
@@ -436,6 +440,16 @@ fn spec_at(agent: &str, config_home: PathBuf) -> Result<Spec> {
             }),
             config_home,
         }),
+        // Kiro bloqueia em PreToolUse, mas por arquivos `.kiro.hook` do workspace, fora da
+        // configuração global que o Torii gerencia; aqui só o MCP é instalado.
+        "kiro" => Ok(Spec {
+            name: "kiro",
+            display_name: "Kiro",
+            mcp_path: config_home.join("mcp.json"),
+            mcp_key: "mcpServers",
+            hook: None,
+            config_home,
+        }),
         // pi não fala MCP nativamente; extensões MCP da comunidade leem este mcp.json no
         // formato compartilhado com os demais hosts.
         "pi" => Ok(Spec {
@@ -487,7 +501,7 @@ fn desired_mcp_entry(spec: &Spec, executable: &Path, config: &Path) -> Result<Va
             "args": [],
             "env": { "TORII_CONFIG_DIR": config }
         })),
-        "gemini" | "cursor" | "pi" | "antigravity" => Ok(json!({
+        "gemini" | "cursor" | "pi" | "antigravity" | "kiro" => Ok(json!({
             "command": command,
             "args": [],
             "env": { "TORII_CONFIG_DIR": config }
