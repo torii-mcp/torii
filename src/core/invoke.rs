@@ -148,6 +148,10 @@ impl Invoker {
         tool: &str,
         target_name: Option<&str>,
         args: &[String],
+        // The agent's own account of why it makes this call. Shown to the human
+        // in a prompt as unverified text; it never takes part in a decision and
+        // is never audited.
+        description: Option<&str>,
     ) -> Result<InvocationResult> {
         if args.is_empty() {
             return Err(Error::InvalidArguments(
@@ -227,7 +231,10 @@ impl Invoker {
             return Ok(invocation_result(&provider, &scope, decision, None));
         }
 
-        if !self.ensure_target_access(&provider, &scope).await? {
+        if !self
+            .ensure_target_access(&provider, &scope, description)
+            .await?
+        {
             return Ok(target_access_denied_result(
                 &provider,
                 &scope,
@@ -258,6 +265,7 @@ impl Invoker {
                     args,
                     min_tokens,
                     &audit_rule,
+                    description,
                 )
                 .await?
             }
@@ -442,6 +450,7 @@ impl Invoker {
         &self,
         provider: &Provider,
         scope: &InvocationScope,
+        description: Option<&str>,
     ) -> Result<bool> {
         let Some(target_name) = scope.target.as_deref() else {
             return Ok(true);
@@ -489,6 +498,7 @@ impl Invoker {
             &requested_binding,
             &active_targets,
             self.settings.default_target_minutes,
+            description,
         )
         .await?;
         let (minutes, mode, event) = match choice {
@@ -572,6 +582,7 @@ impl Invoker {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn resolve_unresolved(
         &self,
         ignore: &IgnoreArgs,
@@ -580,6 +591,7 @@ impl Invoker {
         args: &[String],
         minimum: usize,
         audit_rule: &str,
+        description: Option<&str>,
     ) -> Result<PolicyDecision> {
         let audit_scope = &scope.audit_scope;
         let grants_path = &scope.grants;
@@ -624,6 +636,7 @@ impl Invoker {
             self.settings.default_grant_minutes,
             align_seconds,
             permanent,
+            description,
         )
         .await?;
         match choice {

@@ -25,7 +25,14 @@ struct ToolArguments {
     #[serde(default)]
     target: Option<String>,
     args: Vec<String>,
+    #[serde(default)]
+    description: Option<String>,
 }
+
+/// Longest description, in characters, the agent may attach to a call.
+const MAX_DESCRIPTION_CHARS: usize = 500;
+
+const DESCRIPTION_SCHEMA_TEXT: &str = "Why this call is being made, shown to the human at the top of the approval window. Always fill it in: name the project or repository, what you intend to learn or change, and, when the call is part of a plan, which step it is (for example: \"projeto billing-api: passo 1 de 3, conferir se o namespace payments já existe no cluster\"). Plain text, at most 500 characters. It is displayed as unverified agent text and never changes the policy decision.";
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -126,7 +133,7 @@ impl ServerHandler for ToriiServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(rmcp::model::Implementation::new("torii", env!("CARGO_PKG_VERSION")))
-            .with_instructions("Use Torii MCP tools for installed provider CLIs; never invoke those provider executables directly through a shell or try to bypass a denial. Before choosing an operation, call torii_policy with the provider tool and, when required, its announced target to inspect accept and deny rules. Pass argv as an array of strings. For target-aware tools, choose only a target announced by the schema. An announced alias is configured, not necessarily authorized: Torii asks the human before an inactive target can be used. If target access is denied, do not retry with a different alias. Multiple aliases may be temporarily active only when the human explicitly allows that. Policy is default-deny and explicit deny always wins. In target-aware tools it is layered: the shared provider denies apply in every target and cannot be lifted there, while a target's own accepts replace the shared ones, so read the policy for the target you intend to use. For an allowed call with managed authentication, Torii asks the human to authenticate automatically when the session is unavailable. There is no MCP reauth or target-management tool: a human uses the Torii control-plane CLI outside MCP. An aws_profile target is different: if its configured AWS CLI profile is unavailable or the active account does not match, ask a human to authenticate that configured profile through the native AWS CLI flow and retry; never choose a different alias or profile yourself.")
+            .with_instructions("Use Torii MCP tools for installed provider CLIs; never invoke those provider executables directly through a shell or try to bypass a denial. Before choosing an operation, call torii_policy with the provider tool and, when required, its announced target to inspect accept and deny rules. Pass argv as an array of strings, and always add a short description saying which project the call serves, why it is needed, and which step of your plan it is (for example \"step 1 of 3\"); the human reads it in the approval window. For target-aware tools, choose only a target announced by the schema. An announced alias is configured, not necessarily authorized: Torii asks the human before an inactive target can be used. If target access is denied, do not retry with a different alias. Multiple aliases may be temporarily active only when the human explicitly allows that. Policy is default-deny and explicit deny always wins. In target-aware tools it is layered: the shared provider denies apply in every target and cannot be lifted there, while a target's own accepts replace the shared ones, so read the policy for the target you intend to use. For an allowed call with managed authentication, Torii asks the human to authenticate automatically when the session is unavailable. There is no MCP reauth or target-management tool: a human uses the Torii control-plane CLI outside MCP. An aws_profile target is different: if its configured AWS CLI profile is unavailable or the active account does not match, ask a human to authenticate that configured profile through the native AWS CLI flow and retry; never choose a different alias or profile yourself.")
     }
 
     async fn list_tools(
@@ -168,7 +175,9 @@ impl ServerHandler for ToriiServer {
         let value = Value::Object(request.arguments.unwrap_or_default());
         let arguments: ToolArguments = serde_json::from_value(value).map_err(|error| {
             McpError::invalid_params(
-                format!("expected {{ target?: string, args: string[] }}: {error}"),
+                format!(
+                    "expected {{ target?: string, args: string[], description?: string }}: {error}"
+                ),
                 None,
             )
         })?;
@@ -178,9 +187,19 @@ impl ServerHandler for ToriiServer {
                 None,
             ));
         }
+        let description = match arguments.description.as_deref().map(display_description) {
+            Some(Err(message)) => return Err(McpError::invalid_params(message, None)),
+            Some(Ok(description)) => description,
+            None => None,
+        };
         match self
             .invoker
-            .invoke(&request.name, arguments.target.as_deref(), &arguments.args)
+            .invoke(
+                &request.name,
+                arguments.target.as_deref(),
+                &arguments.args,
+                description.as_deref(),
+            )
             .await
         {
             Ok(result) => {
@@ -234,6 +253,14 @@ fn tool_schema(provider: &crate::providers::Provider) -> Map<String, Value> {
         "args".into(),
         json!({ "type": "array", "items": { "type": "string" }, "minItems": 1 }),
     );
+    properties.insert(
+        "description".into(),
+        json!({
+            "type": "string",
+            "maxLength": MAX_DESCRIPTION_CHARS,
+            "description": DESCRIPTION_SCHEMA_TEXT
+        }),
+    );
     let mut required = vec![Value::String("args".into())];
     if provider.uses_targets() {
         let names = provider.target_names().collect::<Vec<_>>();
@@ -254,6 +281,36 @@ fn tool_schema(provider: &crate::providers::Provider) -> Map<String, Value> {
     .as_object()
     .cloned()
     .expect("static schema is an object")
+}
+
+/// The description as the window will show it: one line, without control or
+/// bidirectional-override characters that could disguise what the human reads.
+/// Blank means absent; too long is refused rather than silently cut.
+fn display_description(raw: &str) -> std::result::Result<Option<String>, String> {
+    if raw.chars().count() > MAX_DESCRIPTION_CHARS {
+        return Err(format!(
+            "description must have at most {MAX_DESCRIPTION_CHARS} characters"
+        ));
+    }
+    let visible = raw
+        .chars()
+        .map(|c| {
+            if c.is_control() || is_bidi_control(c) {
+                ' '
+            } else {
+                c
+            }
+        })
+        .collect::<String>();
+    let line = visible.split_whitespace().collect::<Vec<_>>().join(" ");
+    Ok((!line.is_empty()).then_some(line))
+}
+
+fn is_bidi_control(c: char) -> bool {
+    matches!(
+        c,
+        '\u{061C}' | '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}'
+    )
 }
 
 fn safe_error(error: &Error) -> String {
@@ -325,6 +382,7 @@ auth:
         let schema = tool_schema(&provider);
 
         assert_eq!(schema["required"], json!(["target", "args"]));
+        assert_eq!(schema["properties"]["description"]["type"], "string");
         assert_eq!(schema["properties"]["target"]["enum"], json!(["mpce_dev"]));
 
         let server = ToriiServer::new(Invoker::new(paths, Settings::default(), registry));
@@ -368,5 +426,16 @@ auth:
         assert_eq!(schema["properties"]["target"]["enum"], json!(["prod"]));
         assert!(!serialized.contains("production-sso"));
         assert!(!serialized.contains("123456789012"));
+    }
+
+    #[test]
+    fn description_is_flattened_to_one_visible_line() {
+        assert_eq!(
+            display_description("  passo 1 de 3:\n\tlistar\u{202E}namespaces  ").unwrap(),
+            Some("passo 1 de 3: listar namespaces".into())
+        );
+        assert_eq!(display_description(" \n ").unwrap(), None);
+        assert!(display_description(&"x".repeat(MAX_DESCRIPTION_CHARS + 1)).is_err());
+        assert!(display_description(&"é".repeat(MAX_DESCRIPTION_CHARS)).is_ok());
     }
 }

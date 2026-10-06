@@ -142,11 +142,20 @@ pub async fn ask_access(
     default_minutes: u32,
     align_seconds: Option<u32>,
     permanent: PermanentPolicy,
+    description: Option<&str>,
 ) -> Result<AccessChoice> {
     if gui_disabled() {
         return Ok(AccessChoice::Deny);
     }
-    gui::ask_access(provider, args, default_minutes, align_seconds, permanent).await
+    gui::ask_access(
+        provider,
+        args,
+        default_minutes,
+        align_seconds,
+        permanent,
+        description,
+    )
+    .await
 }
 
 pub async fn ask_target_access(
@@ -155,6 +164,7 @@ pub async fn ask_target_access(
     requested_binding: &str,
     active_targets: &[ActiveTargetAuthorization],
     default_minutes: u32,
+    description: Option<&str>,
 ) -> Result<TargetAccessChoice> {
     if gui_disabled() {
         return Ok(TargetAccessChoice::Deny);
@@ -165,6 +175,7 @@ pub async fn ask_target_access(
         requested_binding,
         active_targets,
         default_minutes,
+        description,
     )
     .await
 }
@@ -236,6 +247,7 @@ mod tests {
                 "profile cli-prd · conta 123456789012 · região sa-east-1",
                 &[],
                 15,
+                None,
             ))
             .unwrap();
         assert_eq!(choice, TargetAccessChoice::Deny);

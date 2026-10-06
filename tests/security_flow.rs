@@ -52,7 +52,7 @@ async fn explicit_deny_does_not_load_environment_or_authentication() {
     auth.ensure().unwrap();
     fs::write(auth.credentials(), "also invalid").unwrap();
     let result = Invoker::new(paths, Settings::default(), registry)
-        .invoke("test", None, &["danger".into()])
+        .invoke("test", None, &["danger".into()], None)
         .await
         .unwrap();
     assert_eq!(result.decision.result, DecisionResult::Deny);
@@ -65,7 +65,7 @@ async fn headless_unresolved_is_default_deny_before_session_loading() {
     let _env_lock = GUI_ENV_LOCK.lock().await;
     std::env::set_var("TORII_NO_GUI", "1");
     let result = Invoker::new(paths, Settings::default(), registry)
-        .invoke("test", None, &["unknown".into()])
+        .invoke("test", None, &["unknown".into()], None)
         .await
         .unwrap();
     std::env::remove_var("TORII_NO_GUI");
@@ -247,6 +247,7 @@ async fn a_credentials_target_rejects_an_option_that_redirects_credentials() {
             "awsx",
             Some("mdb-prd"),
             &["s3".into(), "ls".into(), "--profile".into(), "outra".into()],
+            None,
         )
         .await
         .unwrap_err();
@@ -263,7 +264,7 @@ async fn a_credentials_target_starts_inactive() {
     let _env_lock = GUI_ENV_LOCK.lock().await;
     std::env::set_var("TORII_NO_GUI", "1");
     let result = Invoker::new(paths, Settings::default(), registry)
-        .invoke("awsx", Some("mdb-prd"), &["s3".into(), "ls".into()])
+        .invoke("awsx", Some("mdb-prd"), &["s3".into(), "ls".into()], None)
         .await
         .unwrap();
     std::env::remove_var("TORII_NO_GUI");
@@ -284,6 +285,7 @@ async fn a_credentials_target_carries_the_shared_deny_floor() {
             "awsx",
             Some("mdb-prd"),
             &["iam".into(), "list-users".into()],
+            None,
         )
         .await
         .unwrap();
@@ -386,7 +388,7 @@ auth:
 async fn targeted_provider_requires_a_known_target() {
     let (_temp, paths, registry) = targeted_fixture();
     let error = Invoker::new(paths, Settings::default(), registry)
-        .invoke("kubectl", None, &["get".into(), "pods".into()])
+        .invoke("kubectl", None, &["get".into(), "pods".into()], None)
         .await
         .unwrap_err();
     assert!(error.to_string().contains("target is required"));
@@ -405,6 +407,7 @@ async fn target_locked_options_are_rejected_before_environment_or_spawn() {
             "kubectl",
             Some("mpce_dev"),
             &["get".into(), "pods".into(), "--context=evil".into()],
+            None,
         )
         .await
         .unwrap_err();
@@ -430,6 +433,7 @@ async fn aws_profile_override_is_rejected_before_environment_or_authentication()
                 "describe-instances".into(),
                 "--profile=other".into(),
             ],
+            None,
         )
         .await
         .unwrap_err();
@@ -452,6 +456,7 @@ async fn denied_aws_profile_call_does_not_read_environment_or_check_identity() {
             "aws_profile",
             Some("prod"),
             &["danger".into(), "action".into()],
+            None,
         )
         .await
         .unwrap();
@@ -489,7 +494,7 @@ async fn explicit_deny_reports_the_selected_target() {
     )
     .unwrap();
     let result = Invoker::new(paths.clone(), Settings::default(), registry)
-        .invoke("kubectl", Some("mpce_dev"), &["danger".into()])
+        .invoke("kubectl", Some("mpce_dev"), &["danger".into()], None)
         .await
         .unwrap();
     assert_eq!(result.target.as_deref(), Some("mpce_dev"));
@@ -518,7 +523,12 @@ async fn inactive_target_is_denied_before_environment_authentication_or_prefligh
     let _env_lock = GUI_ENV_LOCK.lock().await;
     std::env::set_var("TORII_NO_GUI", "1");
     let result = Invoker::new(paths.clone(), Settings::default(), registry)
-        .invoke("kubectl", Some("mpce_dev"), &["get".into(), "pods".into()])
+        .invoke(
+            "kubectl",
+            Some("mpce_dev"),
+            &["get".into(), "pods".into()],
+            None,
+        )
         .await
         .unwrap();
     std::env::remove_var("TORII_NO_GUI");
@@ -542,7 +552,12 @@ async fn a_target_policy_adds_its_own_deny() {
     )
     .unwrap();
     let result = Invoker::new(paths, Settings::default(), registry)
-        .invoke("kubectl", Some("mpce_dev"), &["get".into(), "pods".into()])
+        .invoke(
+            "kubectl",
+            Some("mpce_dev"),
+            &["get".into(), "pods".into()],
+            None,
+        )
         .await
         .unwrap();
     assert_eq!(result.decision.result, DecisionResult::Deny);
@@ -562,7 +577,7 @@ async fn a_target_policy_cannot_drop_a_shared_deny() {
     )
     .unwrap();
     let result = Invoker::new(paths.clone(), Settings::default(), registry)
-        .invoke("kubectl", Some("mpce_dev"), &["danger".into()])
+        .invoke("kubectl", Some("mpce_dev"), &["danger".into()], None)
         .await
         .unwrap();
     assert_eq!(result.decision.result, DecisionResult::Deny);
@@ -590,7 +605,12 @@ async fn a_shared_accept_does_not_leak_into_a_target_with_its_own_policy() {
     // `get pods` é accept na compartilhada e não foi relistado aqui: volta a ser
     // não resolvido, e sem interface humana isso é negado.
     let result = Invoker::new(paths, Settings::default(), registry)
-        .invoke("kubectl", Some("mpce_dev"), &["get".into(), "pods".into()])
+        .invoke(
+            "kubectl",
+            Some("mpce_dev"),
+            &["get".into(), "pods".into()],
+            None,
+        )
         .await
         .unwrap();
     std::env::remove_var("TORII_NO_GUI");
@@ -621,7 +641,7 @@ async fn a_permanent_rule_resolves_the_next_call_by_policy() {
     // A chamada é resolvida pelas regras e segue para a execução, que falha porque
     // o provider de teste não tem executável: chegar até lá é a prova do allow.
     let error = Invoker::new(paths.clone(), Settings::default(), registry)
-        .invoke("kubectl", Some("mpce_dev"), &normalized)
+        .invoke("kubectl", Some("mpce_dev"), &normalized, None)
         .await
         .unwrap_err();
     assert!(
@@ -651,6 +671,7 @@ async fn a_headless_call_never_writes_a_permanent_rule() {
             "kubectl",
             Some("mpce_dev"),
             &["get".into(), "secrets".into()],
+            None,
         )
         .await
         .unwrap();
@@ -673,7 +694,7 @@ async fn a_target_without_a_policy_of_its_own_uses_the_shared_one_whole() {
     let target_rules = paths.provider("kubectl").target("mpce_dev").rules();
     assert!(!target_rules.exists());
     let result = Invoker::new(paths, Settings::default(), registry)
-        .invoke("kubectl", Some("mpce_dev"), &["danger".into()])
+        .invoke("kubectl", Some("mpce_dev"), &["danger".into()], None)
         .await
         .unwrap();
     assert_eq!(result.decision.result, DecisionResult::Deny);
@@ -718,7 +739,12 @@ async fn target_runs_the_inherited_lifecycle_of_its_provider() {
     let registry = ProviderRegistry::load(&paths).unwrap();
 
     let error = Invoker::new(paths.clone(), Settings::default(), registry)
-        .invoke("kubectl", Some("mpce_dev"), &["get".into(), "pods".into()])
+        .invoke(
+            "kubectl",
+            Some("mpce_dev"),
+            &["get".into(), "pods".into()],
+            None,
+        )
         .await
         .unwrap_err();
 
@@ -737,7 +763,7 @@ async fn explicit_deny_does_not_read_preflight_provider_environment() {
     let registry = ProviderRegistry::load(&paths).unwrap();
 
     let result = Invoker::new(paths.clone(), Settings::default(), registry)
-        .invoke("kubectl", Some("mpce_dev"), &["danger".into()])
+        .invoke("kubectl", Some("mpce_dev"), &["danger".into()], None)
         .await
         .unwrap();
 
@@ -755,7 +781,12 @@ async fn allowed_target_stops_when_preflight_provider_fails() {
     let registry = ProviderRegistry::load(&paths).unwrap();
 
     let error = Invoker::new(paths.clone(), Settings::default(), registry)
-        .invoke("kubectl", Some("mpce_dev"), &["get".into(), "pods".into()])
+        .invoke(
+            "kubectl",
+            Some("mpce_dev"),
+            &["get".into(), "pods".into()],
+            None,
+        )
         .await
         .unwrap_err();
 
@@ -774,7 +805,12 @@ async fn successful_preflight_runs_before_the_target_provider() {
     let registry = ProviderRegistry::load(&paths).unwrap();
 
     let error = Invoker::new(paths.clone(), Settings::default(), registry)
-        .invoke("kubectl", Some("mpce_dev"), &["get".into(), "pods".into()])
+        .invoke(
+            "kubectl",
+            Some("mpce_dev"),
+            &["get".into(), "pods".into()],
+            None,
+        )
         .await
         .unwrap_err();
 
@@ -825,6 +861,7 @@ async fn forbidden_argument_is_denied_before_spawn() {
             "query",
             None,
             &["sql".into(), "--filename".into(), "x.sql".into()],
+            None,
         )
         .await
         .unwrap();
@@ -844,6 +881,7 @@ async fn regex_deny_wins_over_a_broad_literal_accept() {
             "query",
             None,
             &["sql".into(), "-q".into(), "select 1; truncate t".into()],
+            None,
         )
         .await
         .unwrap();
@@ -868,6 +906,7 @@ async fn broad_accept_allows_and_ignored_flags_do_not_block() {
                 "--format".into(),
                 "json".into(),
             ],
+            None,
         )
         .await
         .unwrap_err();
@@ -883,6 +922,7 @@ async fn malformed_regex_rule_fails_closed() {
             "query",
             None,
             &["sql".into(), "-q".into(), "select 1".into()],
+            None,
         )
         .await
         .unwrap_err();
@@ -917,7 +957,7 @@ environment: { file: .env }
     fs::write(provider.target_authorizations(), "deliberately invalid").unwrap();
     let registry = ProviderRegistry::load(&paths).unwrap();
     let _error = Invoker::new(paths.clone(), Settings::default(), registry)
-        .invoke("unchecked", None, &["get".into()])
+        .invoke("unchecked", None, &["get".into()], None)
         .await
         .unwrap_err();
 

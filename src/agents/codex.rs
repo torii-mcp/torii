@@ -137,9 +137,9 @@ pub fn run_hook(paths: &ConfigPaths, agent: &str) -> Result<i32> {
 
     if let Some((tool, targeted)) = guarded_provider(&command, &providers) {
         let arguments = if *targeted {
-            r#"{"target":"<announced-alias>","args":["..."]}"#
+            r#"{"target":"<announced-alias>","args":["..."],"description":"<project, reason, step>"}"#
         } else {
-            r#"{"args":["..."]}"#
+            r#"{"args":["..."],"description":"<project, reason, step>"}"#
         };
         print_denial(
             agent,

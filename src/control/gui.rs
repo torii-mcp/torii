@@ -28,6 +28,9 @@ enum PromptRequest {
         align_seconds: Option<u32>,
         /// What a permanent decision would write, and whether it can be written.
         permanent: PermanentPolicy,
+        /// The agent's unverified account of why it makes this call.
+        #[serde(default)]
+        description: Option<String>,
     },
     TargetAccess {
         provider: String,
@@ -35,6 +38,8 @@ enum PromptRequest {
         requested_binding: String,
         active_targets: Vec<ActiveTargetAuthorization>,
         default_minutes: u32,
+        #[serde(default)]
+        description: Option<String>,
     },
     Auth {
         provider: String,
@@ -63,6 +68,7 @@ pub async fn ask_access(
     default_minutes: u32,
     align_seconds: Option<u32>,
     permanent: PermanentPolicy,
+    description: Option<&str>,
 ) -> Result<AccessChoice> {
     let request = PromptRequest::Access {
         provider: provider.into(),
@@ -70,6 +76,7 @@ pub async fn ask_access(
         default_minutes,
         align_seconds,
         permanent,
+        description: description.map(str::to_owned),
     };
     match invoke_child(request).await? {
         PromptResponse::Access(choice) => Ok(choice),
@@ -86,6 +93,7 @@ pub async fn ask_target_access(
     requested_binding: &str,
     active_targets: &[ActiveTargetAuthorization],
     default_minutes: u32,
+    description: Option<&str>,
 ) -> Result<TargetAccessChoice> {
     let request = PromptRequest::TargetAccess {
         provider: provider.into(),
@@ -93,6 +101,7 @@ pub async fn ask_target_access(
         requested_binding: requested_binding.into(),
         active_targets: active_targets.to_vec(),
         default_minutes,
+        description: description.map(str::to_owned),
     };
     match invoke_child(request).await? {
         PromptResponse::TargetAccess(choice) => Ok(choice),
@@ -171,10 +180,18 @@ pub fn run_child() -> i32 {
             default_minutes,
             align_seconds,
             permanent,
+            description,
         }) => {
             let response = PromptResponse::Access(
-                access_window(provider, args, default_minutes, align_seconds, permanent)
-                    .unwrap_or(AccessChoice::Deny),
+                access_window(
+                    provider,
+                    args,
+                    default_minutes,
+                    align_seconds,
+                    permanent,
+                    description,
+                )
+                .unwrap_or(AccessChoice::Deny),
             );
             if serde_json::to_writer(std::io::stdout(), &response).is_ok() {
                 0
@@ -188,6 +205,7 @@ pub fn run_child() -> i32 {
             requested_binding,
             active_targets,
             default_minutes,
+            description,
         }) => {
             let response = PromptResponse::TargetAccess(target_access_window(
                 provider,
@@ -195,6 +213,7 @@ pub fn run_child() -> i32 {
                 requested_binding,
                 active_targets,
                 default_minutes,
+                description,
             ));
             if serde_json::to_writer(std::io::stdout(), &response).is_ok() {
                 0
@@ -433,6 +452,8 @@ fn token_detail_page(value: &str, page: usize) -> String {
 struct AccessApp {
     provider: String,
     args: Vec<String>,
+    /// Why the agent says it makes this call, unverified.
+    description: Option<String>,
     /// What a permanent decision would write, decided by the server.
     permanent: PermanentPolicy,
     /// When the window opened, for the arming delay of the permanent buttons.
@@ -715,6 +736,7 @@ impl AccessApp {
     fn render_body(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, decided: bool) {
         ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
         ui.heading(format!("Torii — autorização ({})", self.provider));
+        render_agent_description(ui, self.description.as_deref());
         ui.label("A ação não está resolvida pela política.");
         ui.add_space(2.0);
         ui.separator();
@@ -1397,6 +1419,7 @@ fn access_window(
     default_minutes: u32,
     align_seconds: Option<u32>,
     permanent: PermanentPolicy,
+    description: Option<String>,
 ) -> std::result::Result<AccessChoice, String> {
     let suggested_prefix_len = suggested_prefix_len(&args);
     let arg_char_counts = args
@@ -1418,6 +1441,7 @@ fn access_window(
                 provider,
                 prefix_len: args.len().max(1),
                 args,
+                description,
                 permanent,
                 opened_at: Instant::now(),
                 accept_hold: HoldState::default(),
@@ -1467,6 +1491,10 @@ const ALLOW_HOLD_BUTTON_WIDTH: f32 = 232.0;
 const TARGET_WARNING_BG: egui::Color32 = egui::Color32::from_rgb(63, 31, 31);
 const TARGET_WARNING_STROKE: egui::Color32 = egui::Color32::from_rgb(224, 108, 117);
 const HOLD_PROGRESS_BG: egui::Color32 = egui::Color32::from_rgb(77, 105, 58);
+const AGENT_DESCRIPTION_BG: egui::Color32 = egui::Color32::from_rgb(28, 36, 54);
+const AGENT_DESCRIPTION_STROKE: egui::Color32 = egui::Color32::from_rgb(122, 162, 247);
+const AGENT_DESCRIPTION_BASE_HEIGHT: f32 = 40.0;
+const AGENT_DESCRIPTION_LINE_HEIGHT: f32 = 20.0;
 
 /// Which of the two permanent buttons is being rendered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1487,6 +1515,7 @@ struct TargetAccessApp {
     requested_target: String,
     requested_binding: String,
     active_targets: Vec<ActiveTargetAuthorization>,
+    description: Option<String>,
     minutes: u32,
     add_hold: HoldState,
     decision_since: Option<Instant>,
@@ -1699,6 +1728,7 @@ impl eframe::App for TargetAccessApp {
                 "Torii — autorização de target ({})",
                 self.provider
             ));
+            render_agent_description(ui, self.description.as_deref());
             ui.label("O agente solicitou acesso temporário a outro target.");
             ui.group(|ui| {
                 ui.set_min_width(ui.available_width());
@@ -1851,8 +1881,9 @@ fn target_access_window(
     requested_binding: String,
     active_targets: Vec<ActiveTargetAuthorization>,
     default_minutes: u32,
+    description: Option<String>,
 ) -> TargetAccessChoice {
-    let height = target_access_window_height(active_targets.len());
+    let height = target_access_window_height(active_targets.len(), description.as_deref());
     let outcome = Rc::new(RefCell::new(None));
     let result = Rc::clone(&outcome);
     let _ = eframe::run_native(
@@ -1864,6 +1895,7 @@ fn target_access_window(
                 requested_target,
                 requested_binding,
                 active_targets,
+                description,
                 minutes: default_minutes.clamp(1, 1440),
                 add_hold: HoldState::default(),
                 decision_since: None,
@@ -1876,7 +1908,7 @@ fn target_access_window(
     choice
 }
 
-fn target_access_window_height(active_count: usize) -> f32 {
+fn target_access_window_height(active_count: usize, description: Option<&str>) -> f32 {
     let warning_height = if active_count == 0 {
         0.0
     } else {
@@ -1885,8 +1917,48 @@ fn target_access_window_height(active_count: usize) -> f32 {
     (TARGET_ACCESS_MIN_HEIGHT
         + active_count.min(6) as f32 * TARGET_ACCESS_ACTIVE_ROW_HEIGHT
         + warning_height
+        + agent_description_height(description)
         + TITLE_BAR_HEIGHT)
         .min(TARGET_ACCESS_MAX_HEIGHT)
+}
+
+/// Room the description box takes in a window whose height is fixed up front:
+/// the label line plus the text wrapped at roughly the window's width.
+fn agent_description_height(description: Option<&str>) -> f32 {
+    let lines = description.map_or(1, |text| text.chars().count().div_ceil(90).max(1));
+    AGENT_DESCRIPTION_BASE_HEIGHT + lines as f32 * AGENT_DESCRIPTION_LINE_HEIGHT
+}
+
+/// The agent's reason for the call, at the top of a prompt. It is the agent's
+/// own text: labelled as unverified so it reads as context, never as a verdict.
+fn render_agent_description(ui: &mut egui::Ui, description: Option<&str>) {
+    let content_width = (ui.available_width() - 18.0).max(0.0);
+    egui::Frame::none()
+        .fill(AGENT_DESCRIPTION_BG)
+        .stroke(egui::Stroke::new(1.0_f32, AGENT_DESCRIPTION_STROKE))
+        .inner_margin(egui::Margin::same(8.0))
+        .show(ui, |ui| {
+            ui.set_min_width(content_width);
+            ui.spacing_mut().item_spacing.y = 4.0;
+            ui.label(
+                egui::RichText::new("Motivo informado pelo agente · não verificado")
+                    .small()
+                    .strong()
+                    .color(AGENT_DESCRIPTION_STROKE),
+            );
+            match description {
+                Some(text) => {
+                    ui.add(egui::Label::new(egui::RichText::new(text).color(FIXED_TEXT)).wrap());
+                }
+                None => {
+                    ui.label(
+                        egui::RichText::new("O agente não informou o motivo desta chamada.")
+                            .italics()
+                            .weak(),
+                    );
+                }
+            }
+        });
 }
 
 fn hold_update(
@@ -2463,6 +2535,7 @@ mod tests {
             provider: "aws".into(),
             prefix_len: args_len.max(1),
             args,
+            description: None,
             permanent: PermanentPolicy::blocked("test scope", "test", args_len),
             opened_at: Instant::now(),
             accept_hold: HoldState::default(),
@@ -2712,10 +2785,12 @@ mod tests {
                 expires_at_epoch: 200,
             }],
             default_minutes: 15,
+            description: Some("projeto infra: passo 2 de 4".into()),
         };
 
         let payload = serde_json::to_value(request).unwrap();
         assert_eq!(payload["kind"], "target_access");
+        assert_eq!(payload["description"], "projeto infra: passo 2 de 4");
         assert_eq!(
             payload["requested_binding"],
             "profile cli-prd · conta 123456789012"
@@ -2735,23 +2810,37 @@ mod tests {
 
     #[test]
     fn target_access_window_height_is_bounded() {
+        let no_description = agent_description_height(None);
         assert_eq!(
-            target_access_window_height(0),
-            TARGET_ACCESS_MIN_HEIGHT + TITLE_BAR_HEIGHT
+            target_access_window_height(0, None),
+            TARGET_ACCESS_MIN_HEIGHT + no_description + TITLE_BAR_HEIGHT
         );
         assert_eq!(
-            target_access_window_height(1),
+            target_access_window_height(1, None),
             TARGET_ACCESS_MIN_HEIGHT
                 + TARGET_ACCESS_ACTIVE_ROW_HEIGHT
                 + TARGET_ACCESS_WARNING_HEIGHT
+                + no_description
                 + TITLE_BAR_HEIGHT
         );
         assert_eq!(
-            target_access_window_height(100),
+            target_access_window_height(100, None),
             TARGET_ACCESS_MAX_HEIGHT,
             "the cap covers the title bar too, so the window still fits"
         );
-        assert!(target_access_window_height(100) <= TARGET_ACCESS_MAX_HEIGHT);
+        assert!(target_access_window_height(100, None) <= TARGET_ACCESS_MAX_HEIGHT);
+    }
+
+    #[test]
+    fn a_long_description_makes_room_for_its_wrapped_lines() {
+        let short = agent_description_height(Some("passo 1 de 3"));
+        let long = agent_description_height(Some(&"x".repeat(500)));
+        assert_eq!(short, agent_description_height(None));
+        assert!(long > short);
+        assert!(
+            target_access_window_height(0, Some(&"x".repeat(500)))
+                > target_access_window_height(0, None)
+        );
     }
 
     #[test]

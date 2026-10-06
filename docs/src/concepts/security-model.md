@@ -21,6 +21,7 @@ O Torii reduz a superfície de execução disponível ao agente. Ele não transf
 15. **Piso compartilhado de deny.** Em provider target-aware, os denies do `rules.yaml` compartilhado valem em todos os targets e não podem ser removidos pela política de um target; criar a política de um target nunca é caminho para sair de um deny da raiz. Accepts são o contrário: a política do target substitui os accepts compartilhados naquele alias.
 16. **Decisão permanente é gesto humano validado.** Uma regra só é acrescentada à política pela janela depois de um gesto humano de cinco segundos, e somente se a política resultante, compilada e avaliada sobre o argv daquele prefixo, produzir o veredicto pretendido. A janela devolve a fronteira, nunca a regra; o servidor a reconstrói, relê a política do disco e substitui o arquivo atomicamente. O agente não tem tool que edite política e nenhuma escrita acontece em headless.
 17. **Lease humano de target.** Um alias target-aware é configurado, mas começa inativo. Depois de avaliar o deny explícito — que encerra a chamada se compatível — e antes de grants, ambiente, sessão ou execução, o dispatcher exige um lease humano ainda válido para aquele binding.
+18. **Descrição do agente é só contexto.** O motivo que o agente envia em `description` aparece nas janelas como texto não verificado, depois de perder quebras de linha, caracteres de controle e marcas bidirecionais. Ele não altera nenhuma decisão e não é auditado.
 
 ## Ordem crítica
 

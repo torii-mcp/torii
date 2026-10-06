@@ -3,12 +3,15 @@
 Considere a chamada à tool `aws`:
 
 ```json
-{ "args": ["ec2", "describe-instances", "--region", "sa-east-1"] }
+{
+  "args": ["ec2", "describe-instances", "--region", "sa-east-1"],
+  "description": "projeto rede-core: passo 2 de 5, listar as instâncias da VPC antes de ajustar o security group"
+}
 ```
 
 ## 1. Dispatch MCP
 
-O servidor confirma que a tool existe, rejeita campos extras e exige pelo menos um item em `args`.
+O servidor confirma que a tool existe, rejeita campos extras e exige pelo menos um item em `args`. A `description` opcional é reduzida a uma linha sem caracteres de controle e segue apenas até as janelas humanas; ela nunca entra na decisão, na auditoria ou na execução.
 
 Em provider target-aware, exige um alias conhecido, recusa flags bloqueadas e resolve o binding, paths e lock daquele target antes de qualquer leitura de ambiente. `kubectl_context` resolve um context; `aws_profile` resolve profile, conta esperada e região opcional sem expor esses valores ao MCP. O alias pode aparecer no schema e ainda estar inativo: configuração e lease são estados diferentes.
 
@@ -24,7 +27,7 @@ Em uma tool target-aware, o `DeniedExplicit` retorna antes de qualquer tela de l
 
 Um lease de target não é grant Jasper: ele libera apenas a passagem para a política e para a autenticação daquele alias. Se mais de um alias ficar ativo, o agente pode escolher qualquer um deles nas operações que a política permitir.
 
-A janela de uma decisão `Unresolved` mostra os argumentos como tokens e cresce por estados: compacta para uma execução, intermediária para grant `exact` e expandida para edição de prefixo. A largura não muda; o redimensionamento preserva o centro atual da janela. Argumentos longos aparecem com começo, fim e tamanho, e seu conteúdo original pode ser revisado em páginas sem alterar o vetor usado no matcher ou na execução.
+As duas janelas abrem com o motivo que o agente informou em `description`, num quadro marcado como não verificado, para que o humano saiba qual projeto e qual passo do plano estão pedindo a autorização. A janela de uma decisão `Unresolved` mostra os argumentos como tokens e cresce por estados: compacta para uma execução, intermediária para grant `exact` e expandida para edição de prefixo. A largura não muda; o redimensionamento preserva o centro atual da janela. Argumentos longos aparecem com começo, fim e tamanho, e seu conteúdo original pode ser revisado em páginas sem alterar o vetor usado no matcher ou na execução.
 
 Ao escolher uma permissão temporária, o Torii sugere uma fronteira antes do primeiro argumento iniciado por `-`, desde que existam pelo menos dois tokens anteriores. A sugestão é apenas estrutural, vem acompanhada do motivo e pode ser restaurada depois de uma edição; se a fronteira for precoce ou não existir, a invocação exata permanece selecionada. O operador ainda escolhe livremente `exact` ou qualquer prefixo válido.
 
