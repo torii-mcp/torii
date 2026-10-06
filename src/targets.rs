@@ -427,6 +427,110 @@ pub fn remove(paths: &ConfigPaths, tool: &str, name: &str, force: bool) -> Resul
     Ok(())
 }
 
+/// Renames an alias in place: the directory moves with its policy, grants and
+/// `.env`, and `target.yaml` takes the new name.
+///
+/// The credential bucket defaults to the alias name, so a target without an
+/// explicit scope has it pinned to the old name: renaming never strands an
+/// authenticated session. The lease is revoked instead of carried over; the
+/// new alias starts inactive, like any alias the agent has not been granted.
+pub fn rename(paths: &ConfigPaths, tool: &str, name: &str, new_name: &str) -> Result<()> {
+    if !valid_name(new_name) {
+        return Err(Error::InvalidArguments(format!(
+            "invalid target name {new_name:?}"
+        )));
+    }
+    if name == new_name {
+        return Err(Error::InvalidArguments(format!(
+            "target is already named {new_name:?}"
+        )));
+    }
+    let registry = ProviderRegistry::load(paths)?;
+    let provider = targeted_provider(&registry, tool)?;
+    let target = provider.target(name).ok_or_else(|| {
+        Error::InvalidArguments(format!(
+            "unknown target {name:?} for provider tool {tool:?}"
+        ))
+    })?;
+    let metadata =
+        std::fs::symlink_metadata(target.paths.base()).map_err(|source| Error::Read {
+            path: target.paths.base().to_path_buf(),
+            source,
+        })?;
+    if metadata.file_type().is_symlink() {
+        return Err(Error::InvalidArguments(
+            "refusing to rename a symlinked target directory".into(),
+        ));
+    }
+    if target.paths.base() != provider.paths.targets_dir().join(name) {
+        return Err(Error::InvalidArguments(
+            "refusing to rename a target outside its provider".into(),
+        ));
+    }
+    let destination = provider.paths.target(new_name);
+    if destination.base().exists() {
+        return Err(Error::InvalidArguments(format!(
+            "target {new_name:?} already exists for provider tool {tool:?}"
+        )));
+    }
+
+    let mut config = target.config.clone();
+    config.identity.scope = Some(config.credential_scope().to_owned());
+    config.name = new_name.into();
+    let yaml = serde_yaml::to_string(&config).map_err(|source| Error::Yaml {
+        path: destination.config(),
+        source,
+    })?;
+
+    let known = target_access::known_targets(&provider)?;
+    target_access::revoke(
+        &provider.paths.target_authorizations(),
+        &provider.paths.target_authorizations_lock(),
+        &known,
+        name,
+        audit::now_epoch(),
+    )?;
+    audit::log(
+        paths,
+        &provider.config.name,
+        "target-access-revoked",
+        name,
+        "target-renamed",
+    );
+    std::fs::rename(target.paths.base(), destination.base()).map_err(|source| Error::Write {
+        path: destination.base().to_path_buf(),
+        source,
+    })?;
+    // The registry refuses a directory whose name differs from `target.yaml`,
+    // so a failed rewrite puts the directory back rather than leave the whole
+    // provider unloadable.
+    if let Err(error) = replace_file(&destination, &yaml) {
+        let _ = std::fs::rename(destination.base(), target.paths.base());
+        return Err(error);
+    }
+    audit::log(
+        paths,
+        &provider.config.name,
+        "target-renamed",
+        name,
+        new_name,
+    );
+    Ok(())
+}
+
+fn replace_file(target: &TargetPaths, contents: &str) -> Result<()> {
+    let write_error = |source| Error::Write {
+        path: target.config(),
+        source,
+    };
+    let mut staged = tempfile::NamedTempFile::new_in(target.base()).map_err(write_error)?;
+    std::io::Write::write_all(&mut staged, contents.as_bytes()).map_err(write_error)?;
+    staged
+        .persist(target.config())
+        .map_err(|error| write_error(error.error))?;
+    Ok(())
+}
+
 fn targeted_provider(registry: &ProviderRegistry, tool: &str) -> Result<std::sync::Arc<Provider>> {
     let provider = registry
         .get(tool)
@@ -657,5 +761,61 @@ mod tests {
         for (path, expected) in preserved {
             assert_eq!(fs::read(path).unwrap(), expected);
         }
+    }
+
+    #[test]
+    fn rename_keeps_state_pins_the_session_bucket_and_revokes_the_lease() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let paths = ConfigPaths::new(temp.path().to_path_buf());
+        let provider = paths.provider("vault");
+        provider.ensure().unwrap();
+        fs::write(
+            provider.config(),
+            "version: '1'\nname: vault\ntool: vault\ndescription: test\ncommand: vault\ntargeting: { mode: credentials }\nauth: { strategy: inherited }\n",
+        )
+        .unwrap();
+        fs::write(provider.rules(), "version: '1.0'\ndeny: []\naccept: []\n").unwrap();
+        add_credentials(&paths, "vault", "dev", None, IdentityOptions::default()).unwrap();
+        add_credentials(&paths, "vault", "prd", None, IdentityOptions::default()).unwrap();
+        let old = provider.target("dev");
+        fs::write(
+            old.rules(),
+            "version: '1.0'\ndeny: ['secret']\naccept: []\n",
+        )
+        .unwrap();
+        fs::write(old.grants(), "preserved grant bytes").unwrap();
+        activate(&paths, "vault", "dev", 30, false).unwrap();
+
+        assert!(rename(&paths, "vault", "dev", "prd").is_err());
+        assert!(rename(&paths, "vault", "dev", "dev").is_err());
+        assert!(rename(&paths, "vault", "dev", "../escape").is_err());
+        assert!(rename(&paths, "vault", "missing", "other").is_err());
+
+        rename(&paths, "vault", "dev", "billing_dev").unwrap();
+
+        assert!(!old.base().exists());
+        let renamed = provider.target("billing_dev");
+        assert_eq!(
+            fs::read(renamed.grants()).unwrap(),
+            b"preserved grant bytes"
+        );
+        assert!(fs::read_to_string(renamed.rules())
+            .unwrap()
+            .contains("secret"));
+        let registry = ProviderRegistry::load(&paths).unwrap();
+        let provider = registry.get("vault").unwrap();
+        let target = provider.target("billing_dev").unwrap();
+        assert_eq!(target.config.name, "billing_dev");
+        // The session bucket stays where `dev` authenticated it.
+        assert_eq!(target.config.credential_scope(), "dev");
+        let known = target_access::known_targets(&provider).unwrap();
+        assert!(target_access::load(
+            &provider.paths.target_authorizations(),
+            &known,
+            audit::now_epoch()
+        )
+        .unwrap()
+        .active
+        .is_empty());
     }
 }

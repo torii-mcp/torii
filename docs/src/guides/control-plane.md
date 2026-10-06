@@ -68,11 +68,14 @@ torii target activate kubectl meu_dev --for 30
 torii target status kubectl
 torii target activate aws_profile homologacao --for 30 --add
 torii target clear aws_profile
-torii target remove kubectl meu_dev --force
+torii target rename kubectl meu_dev billing_dev
+torii target remove kubectl billing_dev --force
 ```
 
 O primeiro comando cria um binding Kubernetes; o segundo cria um binding AWS de profile e conta esperada. Profile e conta aparecem somente nos comandos humanos `target list` e `target show`, não no MCP. Criar não ativa: todos os aliases target-aware começam sem lease, mas continuam anunciados no schema MCP.
 
 `target activate` libera temporariamente um alias. Sem `--add`, ele substitui todos os aliases ativos daquela tool; com `--add`, preserva os existentes. A duração aceita 1 a 1.440 minutos e usa `default_target_minutes` (15) quando `--for` não é informado. Ao manter mais de um ativo, aceite deliberadamente que o agente poderá escolher qualquer alias ativo em uma operação permitida. `target status` mostra os leases e expirações. `target clear` revoga somente leases: não remove target, rules, grants, `.env`, cache ou credenciais e não encerra processos já iniciados.
 
-Reinicie o servidor MCP após install, upgrade ou mudança no conjunto de targets. A criação/remoção muda o enum do schema; ativar, limpar ou aguardar a expiração não muda o enum. `rules.yaml` e o estado de lease são relidos durante cada chamada.
+`target rename` troca o nome de um alias sem recriá-lo: o diretório do target muda junto com a política própria, os grants e o `.env`, e o `target.yaml` recebe o novo nome. Quando o alias não tinha `--scope`, o balde de credencial era o próprio nome; o rename grava esse nome antigo em `identity.scope`, e a sessão já autenticada continua valendo. O lease é revogado, então o novo nome começa inativo e passa pela autorização humana como qualquer alias. O novo nome não pode existir na mesma tool.
+
+Reinicie o servidor MCP após install, upgrade ou mudança no conjunto de targets. A criação, o rename e a remoção mudam o enum do schema; ativar, limpar ou aguardar a expiração não muda o enum. `rules.yaml` e o estado de lease são relidos durante cada chamada.

@@ -34,6 +34,7 @@ torii provider install --help
 | `torii target activate <tool> <name> [--for <minutes>] [--add]` | concede lease temporário ao alias; por padrão substitui todos os aliases ativos da tool |
 | `torii target status <tool>` | mostra o estado dos leases e suas expirações |
 | `torii target clear <tool>` | revoga todos os leases da tool, sem alterar o estado operacional |
+| `torii target rename <tool> <name> <novo-nome>` | renomeia o alias mantendo binding, política, grants e `.env`; revoga o lease e fixa o balde de credencial no nome antigo |
 | `torii target remove <tool> <name> --force` | revoga o lease e remove o target e seu estado isolado |
 | `torii agent list` | lista adapters de agentes implementados |
 | `torii agent install <agent> [--hook] [--yes]` | registra o MCP no cliente e, quando ele oferecer hook, instala o guard |

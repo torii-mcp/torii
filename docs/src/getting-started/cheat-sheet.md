@@ -144,6 +144,7 @@ torii target show kubectl dev
 torii target activate kubectl dev --for 30   # concede o lease; substitui os ativos da tool
 torii target status kubectl        # leases vivos e expirações
 torii target clear kubectl         # revoga todos os leases da tool
+torii target rename kubectl dev billing_dev  # mantém política e sessão; volta inativo
 torii target remove kubectl dev --force
 ```
 

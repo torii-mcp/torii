@@ -321,6 +321,15 @@ async fn run_async(args: Vec<String>) -> Result<i32> {
             crate::targets::show(&paths, tool, name)?;
             Ok(0)
         }
+        [command, subcommand, tool, name, new_name]
+            if command == "target" && subcommand == "rename" =>
+        {
+            crate::targets::rename(&paths, tool, name, new_name)?;
+            eprintln!(
+                "Target {name:?} renamed to {new_name:?} for provider tool {tool:?}. It starts inactive; restart running agent clients to announce the new alias."
+            );
+            Ok(0)
+        }
         [command, subcommand, tool, name, force]
             if command == "target" && subcommand == "remove" && force == "--force" =>
         {
@@ -442,13 +451,14 @@ fn help_text(command: &[String]) -> Option<&'static str> {
         ["provider", "install"] => Some("Usage:\n  torii provider install <name|directory|archive|https-url>\n\nInstalls a provider package without overwriting an existing provider directory. The installed policy starts empty (default deny)."),
         ["provider", "setup"] => Some("Usage:\n  torii provider setup <provider> <setup>\n\nApplies a package setup only when the provider rules are empty. Setup is the only package command that writes policy rules."),
         ["provider", "upgrade"] => Some("Usage:\n  torii provider upgrade <provider>\n\nUpgrades package-managed files from the source recorded in the lock, while preserving rules, environment, grants, targets, cache, and authentication."),
-        ["target"] => Some("Usage:\n  torii target <command>\n\nCommands:\n  add <tool> <name> --context <context> --provider <tool> [--scope <scope>] [--expect <identity>]\n  add <tool> <name> --profile <aws-profile> --account-id <12-digit-id> [--region <region>]\n  activate <tool> <name> [--for <minutes>] [--add]\n  clear <tool>\n  status <tool>\n  list <tool>\n  show <tool> <name>\n  remove <tool> <name> --force\n\nTargets are human-managed aliases for target-aware provider tools. They are inactive by default and need a temporary human authorization before an agent can use them."),
+        ["target"] => Some("Usage:\n  torii target <command>\n\nCommands:\n  add <tool> <name> --context <context> --provider <tool> [--scope <scope>] [--expect <identity>]\n  add <tool> <name> --profile <aws-profile> --account-id <12-digit-id> [--region <region>]\n  activate <tool> <name> [--for <minutes>] [--add]\n  clear <tool>\n  status <tool>\n  list <tool>\n  show <tool> <name>\n  rename <tool> <name> <new-name>\n  remove <tool> <name> --force\n\nTargets are human-managed aliases for target-aware provider tools. They are inactive by default and need a temporary human authorization before an agent can use them."),
         ["target", "add"] => Some("Usage:\n  torii target add <provider-tool> <name> --context <kubectl-context> --provider <identity-provider-tool> [--scope <scope>] [--expect <identity>]\n  torii target add <provider-tool> <name> --profile <aws-profile> --account-id <12-digit-id> [--region <region>]\n\nThe first form creates a kubectl_context alias authenticated by the given identity provider. --scope names the credential bucket (default: the target name, so targets stay isolated); --expect pins the identity checked by the provider's auth.identity probe before every call. The second form creates an aws_profile alias whose profile and expected account stay under human control."),
         ["target", "activate"] => Some("Usage:\n  torii target activate <provider-tool> <name> [--for <minutes>] [--add]\n\nTemporarily authorizes a configured target. Without `--add`, all other active targets for the provider are replaced. `--add` keeps them active too, which lets the agent choose any active target for operations allowed by policy. Duration must be 1 to 1440 minutes."),
         ["target", "clear"] => Some("Usage:\n  torii target clear <provider-tool>\n\nClears every temporary target authorization for the provider. It does not remove policy grants, credentials, configuration, or a process that already started."),
         ["target", "status"] => Some("Usage:\n  torii target status <provider-tool>\n\nLists active and inactive targets, expiry, and remaining authorization time. A warning is printed when more than one target is active."),
         ["target", "list"] => Some("Usage:\n  torii target list <provider-tool>\n\nLists aliases and their fixed bindings in the human control plane."),
         ["target", "show"] => Some("Usage:\n  torii target show <provider-tool> <name>\n\nPrints the target configuration."),
+        ["target", "rename"] => Some("Usage:\n  torii target rename <provider-tool> <name> <new-name>\n\nRenames an alias, keeping its binding, policy, grants and environment. A target without an explicit --scope has its credential bucket pinned to the old name, so the authenticated session survives. The temporary authorization is revoked: the renamed alias starts inactive. Restart running agent clients so the MCP schema announces the new name."),
         ["target", "remove"] => Some("Usage:\n  torii target remove <provider-tool> <name> --force\n\nRevokes the target authorization and removes the target and its isolated state. `--force` is required."),
         ["agent"] => Some("Usage:\n  torii agent <command>\n\nCommands:\n  list\n  install <agent> [--hook] [--yes]\n  status <agent>\n  uninstall <agent> [--hook]\n\n<agent> is codex, claude, gemini, cursor, antigravity, opencode, copilot, copilot-cli, kiro, or pi. Run `torii agent list` for what each adapter supports. The optional hook redirects direct provider CLI attempts to the corresponding MCP tool and exists only for agents whose pre-execution hook Torii manages."),
         ["self"] | ["self", "upgrade"] => Some("Usage:
