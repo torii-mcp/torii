@@ -31,6 +31,10 @@ pub struct TargetingConfig {
 #[serde(rename_all = "snake_case")]
 pub enum TargetMode {
     KubectlContext,
+    /// Same binding as `KubectlContext` — a context of the human's kubeconfig —
+    /// but for Helm, which spells the selector `--kube-context` and has its own
+    /// set of cluster identity flags.
+    HelmKubeContext,
     AwsProfile,
     /// The alias is a credential bucket and nothing else: no binding is injected
     /// into the argv, because the credentials Torii holds for that scope *are*
@@ -107,6 +111,7 @@ impl TargetMode {
     fn locked_options(self) -> &'static [&'static str] {
         match self {
             Self::KubectlContext => kubectl_locked_options(),
+            Self::HelmKubeContext => helm_locked_options(),
             Self::AwsProfile => aws_profile_locked_options(),
             // Nothing is injected, so the mode itself has nothing to protect.
             // Which options redirect credentials is a property of the CLI, not of
@@ -135,6 +140,20 @@ fn kubectl_locked_options() -> &'static [&'static str] {
         "--as-group",
         "--as-uid",
         "--as-user-extra",
+    ]
+}
+
+fn helm_locked_options() -> &'static [&'static str] {
+    &[
+        "--kube-context",
+        "--kubeconfig",
+        "--kube-apiserver",
+        "--kube-token",
+        "--kube-as-user",
+        "--kube-as-group",
+        "--kube-ca-file",
+        "--kube-insecure-skip-tls-verify",
+        "--kube-tls-server-name",
     ]
 }
 
@@ -394,6 +413,30 @@ mod tests {
             assert!(targeting.rejects_argument(argument), "{argument}");
         }
         assert!(!targeting.rejects_argument("--output=json"));
+    }
+
+    #[test]
+    fn helm_kube_context_rejects_cluster_identity_overrides() {
+        let targeting = TargetingConfig {
+            mode: TargetMode::HelmKubeContext,
+            locked_options: Vec::new(),
+        };
+        for argument in [
+            "--kube-context",
+            "--kube-context=other",
+            "--kubeconfig=elsewhere",
+            "--kube-apiserver=https://evil",
+            "--kube-token=x",
+            "--kube-as-user=admin",
+            "--kube-as-group=system:masters",
+            "--kube-ca-file=ca.pem",
+            "--kube-insecure-skip-tls-verify",
+            "--kube-tls-server-name=x",
+        ] {
+            assert!(targeting.rejects_argument(argument), "{argument}");
+        }
+        // kubectl's spelling is meaningless to Helm and is not part of its baseline.
+        assert!(!targeting.rejects_argument("--namespace=default"));
     }
 
     fn s(values: &[&str]) -> Vec<String> {

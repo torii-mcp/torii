@@ -1,0 +1,12 @@
+version: "1"
+name: helm
+package_version: "0.1.0"
+description: Helm target-aware com setups de política por cluster.
+provider: provider.yaml
+rules: rules.yaml
+environment: env.example
+setups:
+  - name: readonly
+    kind: readonly
+    description: Inventário de releases sem expor values nem alterar o cluster.
+    rules: setups/readonly/rules.yaml

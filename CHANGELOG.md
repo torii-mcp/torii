@@ -8,6 +8,14 @@ Todas as mudanças relevantes deste projeto são registradas aqui. O formato seg
 
 ### Adicionado
 
+- Provider `helm` com o modo de targeting `helm_kube_context`: o mesmo binding do
+  `kubectl_context` (um context do kubeconfig autenticado por um provider de identidade), mas
+  injetando `--kube-context` e bloqueando as flags de identidade do Helm (`--kubeconfig`,
+  `--kube-apiserver`, `--kube-token`, `--kube-as-user` e afins). `target add` confere o context
+  com `kubectl config get-contexts`, porque o Helm não lista contexts sem contatar o cluster. O
+  pacote proíbe `--post-renderer`, que executa um binário local escolhido pelo argv, e o setup
+  `readonly` aceita só `list`, `history` e `get metadata`: values de release costumam carregar
+  segredos.
 - A janela de autenticação identifica o target: o título traz `provider/target` e uma faixa
   destacada acima do formulário repete para qual target aquelas credenciais vão servir. Vários
   targets podem compartilhar o mesmo provider de identidade, e duas janelas abertas ao mesmo

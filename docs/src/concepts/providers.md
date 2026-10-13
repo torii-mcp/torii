@@ -42,7 +42,7 @@ providers/kubectl/targets/
 
 Cada `target.yaml` associa o alias a um context e indica o provider cujo lifecycle será herdado. O registry publica todos os aliases configurados no schema MCP e exige `target` na chamada. O executor injeta `--context <configurado>` antes de `args` e rejeita flags de override enviadas pelo agente.
 
-Um provider target-aware declara um `mode`, que diz o que o alias significa: `kubectl_context` amarra o alias a um context do kubeconfig, `aws_profile` a um profile do AWS CLI e a uma conta, e `credentials` ao próprio balde de credencial — sem injetar nada no argv, para CLIs cuja credencial vem do ambiente. Em todos, o alias carrega lease, camada de política, grants e verificação de identidade.
+Um provider target-aware declara um `mode`, que diz o que o alias significa: `kubectl_context` amarra o alias a um context do kubeconfig, `helm_kube_context` faz o mesmo para o Helm, `aws_profile` a um profile do AWS CLI e a uma conta, e `credentials` ao próprio balde de credencial — sem injetar nada no argv, para CLIs cuja credencial vem do ambiente. Em todos, o alias carrega lease, camada de política, grants e verificação de identidade.
 
 O alias começa inativo. Antes de grants Jasper, ambiente ou autenticação, o dispatcher exige um lease humano válido, armazenado no escopo do provider e vinculado por digest ao binding atual. A ativação normal substitui os aliases ativos da tool; adicionar outro é uma escolha humana explícita, pois deixa o agente escolher qualquer alias ativo nas operações permitidas.
 

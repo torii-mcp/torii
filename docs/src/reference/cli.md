@@ -26,7 +26,7 @@ torii provider install --help
 | `torii policy show <tool> [target]` | imprime a política ativa e avisa sobre accepts ignorados |
 | `torii policy edit <tool> [target] [--create] [--copy-shared]` | abre a política no editor, valida e só então substitui |
 | `torii reauth <tool> [target]` | força autenticação gerenciada no escopo |
-| `torii target add <tool> <name> --context <context> --provider <tool> [--scope <scope>] [--expect <identity>]` | valida o context e cria o target autenticado pelo provider de identidade indicado; `--scope` isola o balde de credencial (default: nome do target) e `--expect` fixa a identidade conferida pelo probe |
+| `torii target add <tool> <name> --context <context> --provider <tool> [--scope <scope>] [--expect <identity>]` | valida o context (`kubectl_context` ou `helm_kube_context`) e cria o target autenticado pelo provider de identidade indicado; `--scope` isola o balde de credencial (default: nome do target) e `--expect` fixa a identidade conferida pelo probe |
 | `torii target add <tool> <name> --profile <profile> --account-id <12-dígitos> [--region <região>]` | cria um alias `aws_profile` com profile e conta esperada sob controle humano |
 | `torii target list <tool>` | lista aliases e seus bindings fixos no control plane humano |
 | `torii target show <tool> <name>` | imprime `target.yaml` |

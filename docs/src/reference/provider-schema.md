@@ -37,6 +37,23 @@ targeting:
 
 Tanto `--flag valor` quanto `--flag=valor` são recusados. `locked_options` adiciona flags específicas do provider e cada item deve começar com `--`, sem espaço ou `=`.
 
+## Targeting Helm
+
+```yaml
+targeting:
+  mode: helm_kube_context
+```
+
+`helm_kube_context` é o mesmo binding do `kubectl_context` — um context do kubeconfig, com o mesmo `target.yaml` e o mesmo bloco `identity` — para o Helm, que seleciona o cluster por `--kube-context <context>`. A baseline não removível de flags bloqueadas é a do Helm:
+
+```text
+--kube-context --kubeconfig --kube-apiserver --kube-token
+--kube-as-user --kube-as-group --kube-ca-file
+--kube-insecure-skip-tls-verify --kube-tls-server-name
+```
+
+`torii target add` confere o context com `kubectl config get-contexts`, sob o `.env` do provider helm, porque o Helm não lista contexts sem contatar o cluster. Por isso o `kubectl` precisa estar no `PATH` de quem cadastra o target; ele não é usado nas chamadas MCP.
+
 Cada target possui `target.yaml` com `version: "1"`:
 
 ```yaml
@@ -49,7 +66,7 @@ identity:
   expect: "111122223333"
 ```
 
-O `name` deve coincidir com o diretório e o context não pode ser vazio ou conter quebra de linha. O bloco `identity` define a autenticação:
+Nos dois modos de context, o `name` deve coincidir com o diretório e o context não pode ser vazio ou conter quebra de linha. O bloco `identity` define a autenticação:
 
 | Campo | Obrigatório | Descrição |
 |---|---|---|

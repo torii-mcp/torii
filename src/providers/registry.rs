@@ -370,11 +370,12 @@ fn validate_target(config: &TargetConfig, paths: &TargetPaths, mode: TargetMode)
         return Err(fail("region cannot be empty or contain line breaks".into()));
     }
     match mode {
-        TargetMode::KubectlContext => {
+        TargetMode::KubectlContext | TargetMode::HelmKubeContext => {
             let context = config.context.as_deref().unwrap_or_default();
             if context.trim().is_empty() || has_line_break(context) {
                 return Err(fail(
-                    "context cannot be empty or contain line breaks for kubectl_context".into(),
+                    "context cannot be empty or contain line breaks for a kube context target"
+                        .into(),
                 ));
             }
         }

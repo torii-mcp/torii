@@ -35,7 +35,15 @@ pub async fn add(
     }
     let registry = ProviderRegistry::load(paths)?;
     let provider = targeted_provider(&registry, tool)?;
-    require_mode(&provider, TargetMode::KubectlContext)?;
+    let mode = target_mode(&provider)?;
+    if !matches!(
+        mode,
+        TargetMode::KubectlContext | TargetMode::HelmKubeContext
+    ) {
+        return Err(Error::InvalidArguments(format!(
+            "provider tool {tool:?} does not bind targets to a kube context"
+        )));
+    }
     let identity_provider = validate_identity_provider(&registry, identity_provider)?;
     check_expect_probe(&identity_provider, &options)?;
     let destination = provider.paths.target(name);
@@ -44,7 +52,7 @@ pub async fn add(
             "target {name:?} already exists for provider tool {tool:?}"
         )));
     }
-    validate_context(&provider, context).await?;
+    validate_context(&provider, mode, context).await?;
     let config = TargetConfig {
         version: "1".into(),
         name: name.into(),
@@ -241,7 +249,7 @@ pub fn list(paths: &ConfigPaths, tool: &str) -> Result<()> {
                 identity.expect.as_deref().unwrap_or("-"),
                 scope,
             ),
-            TargetMode::KubectlContext => println!(
+            TargetMode::KubectlContext | TargetMode::HelmKubeContext => println!(
                 "{}\t{}\t{}\t{}",
                 target.config.name,
                 target.config.context.as_deref().expect("validated context"),
@@ -594,8 +602,18 @@ fn validate_region(region: &str) -> Result<()> {
     Ok(())
 }
 
-async fn validate_context(provider: &Provider, context: &str) -> Result<()> {
-    require_mode(provider, TargetMode::KubectlContext)?;
+/// Confirms the context exists in the kubeconfig the provider will read.
+///
+/// Helm has no command that lists contexts without contacting a cluster, so a
+/// Helm target is checked with `kubectl`, which reads the same kubeconfig under
+/// the same `.env`. The provider's `args_prefix` belongs to its own CLI and is
+/// not forwarded to `kubectl`.
+async fn validate_context(provider: &Provider, mode: TargetMode, context: &str) -> Result<()> {
+    let (command, prefix): (&str, &[String]) = match mode {
+        TargetMode::KubectlContext => (&provider.config.command, &provider.config.args_prefix),
+        TargetMode::HelmKubeContext => ("kubectl", &[]),
+        _ => unreachable!("only kube context modes are validated here"),
+    };
     let args = vec![
         "config".to_string(),
         "get-contexts".to_string(),
@@ -609,17 +627,17 @@ async fn validate_context(provider: &Provider, context: &str) -> Result<()> {
             .base()
             .join(&provider.config.environment.file),
     )?;
-    let program = crate::runtime::program::resolve(&provider.config.command)?;
-    let mut command = tokio::process::Command::new(program);
-    command
-        .args(&provider.config.args_prefix)
+    let program = crate::runtime::program::resolve(command)?;
+    let mut child = tokio::process::Command::new(program);
+    child
+        .args(prefix)
         .args(&args)
         .envs(persistent_env)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
-    let output = command.output().await.map_err(|source| Error::Spawn {
-        program: provider.config.command.clone(),
+    let output = child.output().await.map_err(|source| Error::Spawn {
+        program: command.to_string(),
         source,
     })?;
     let found = output.status.success()
@@ -628,7 +646,7 @@ async fn validate_context(provider: &Provider, context: &str) -> Result<()> {
             .any(|candidate| candidate.trim() == context);
     if !found {
         return Err(Error::InvalidArguments(format!(
-            "kubectl context {context:?} was not found"
+            "kube context {context:?} was not found in the kubeconfig"
         )));
     }
     Ok(())

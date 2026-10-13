@@ -1,0 +1,15 @@
+version: "1.0"
+
+# Inventário de releases. `status`, `get values`, `get manifest` e `get all`
+# ficam fora do accept de propósito: os values de um release costumam carregar
+# segredos e `status -o json|yaml` devolve o release inteiro. Eles continuam
+# possíveis com aprovação humana na janela.
+deny:
+  - "plugin"
+  - "env"
+  - "uninstall"
+  - "rollback"
+accept:
+  - "list"
+  - "history"
+  - "get metadata"

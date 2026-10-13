@@ -96,3 +96,22 @@ Grants temporários e `.env` ficam isolados no diretório do target. O `.env` do
 Jasper só decide se a tentativa atravessa. A identidade selecionada no kubeconfig deve ter RBAC de menor privilégio. Uma política local permissiva não amplia RBAC; um RBAC permissivo também não substitui a política local.
 
 Todo target exige `identity.provider`. `torii reauth kubectl dev` delega para o lifecycle desse provider no escopo do target. Um provider `inherited` sem validator passa por esse lifecycle como `session-unchecked`; um provider `inherited` com validator (login via SSO/profile externo) não pode ser renovado pelo Torii — o `reauth` aponta o humano para o fluxo nativo.
+
+## Helm
+
+O helm é um provider separado, com sua própria tool `helm`, política e targets. O binding é o mesmo — um context do kubeconfig autenticado por um provider de identidade —, mas o modo é `helm_kube_context`, que injeta `--kube-context` e bloqueia as flags de identidade do Helm (`--kube-context`, `--kubeconfig`, `--kube-apiserver`, `--kube-token`, `--kube-as-user`, entre outras).
+
+```powershell
+torii provider install ./examples/providers/helm
+torii provider setup helm readonly
+torii target add helm dev --context mdb-k8s-dev-ia --provider aws
+torii target activate helm dev --for 30
+```
+
+O `target add` valida o context com `kubectl config get-contexts` sob o `.env` do provider helm, então o `kubectl` precisa estar instalado na máquina de quem cadastra. Os leases são por tool: ativar `kubectl dev` não ativa `helm dev`.
+
+Uma chamada `{"target": "dev", "args": ["list", "-n", "apps"]}` vira conceitualmente `helm --kube-context mdb-k8s-dev-ia list -n apps`.
+
+O pacote proíbe `--post-renderer` e `--post-renderer-args` em qualquer posição: o post-renderer é um executável local escolhido pelo argv. O setup `readonly` aceita só `list`, `history` e `get metadata` e nega `plugin`, `env`, `uninstall` e `rollback`. `status`, `get values`, `get manifest` e `get all` ficam fora do accept de propósito: values de release costumam carregar segredos, e `status -o json` devolve o release inteiro. Essas operações continuam possíveis com aprovação humana.
+
+`--values`/`-f` e `--set-file` leem arquivos locais e mandam o conteúdo para o cluster. Em uma política que aceite `install` ou `upgrade`, revise esse canal.

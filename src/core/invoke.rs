@@ -949,6 +949,10 @@ fn resolve_scope(
             target_args.push("--context".into());
             target_args.push(target.config.context.clone().expect("validated context"));
         }
+        TargetMode::HelmKubeContext => {
+            target_args.push("--kube-context".into());
+            target_args.push(target.config.context.clone().expect("validated context"));
+        }
         TargetMode::AwsProfile => {
             let profile = identity.profile.clone().expect("validated profile");
             target_args.extend(["--profile".into(), profile]);
@@ -1257,6 +1261,53 @@ environment: { file: .env }
         assert_eq!(scope.auth.scope, "lab");
         assert!(scope.auth.expect.is_none());
         assert!(scope.auth.profile.is_none());
+    }
+
+    /// O helm seleciona o cluster por `--kube-context`; o `--context` do kubectl
+    /// não existe para ele e cairia nos argumentos do subcomando.
+    #[test]
+    fn helm_target_injects_kube_context_and_locks_helm_identity_flags() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let paths = ConfigPaths::new(temp.path().to_path_buf());
+
+        let aws = paths.provider("aws");
+        aws.ensure().unwrap();
+        fs::write(
+            aws.config(),
+            "version: '1'\nname: aws\ntool: aws\ndescription: identity provider\ncommand: executable-not-used\nauth: { strategy: inherited }\nenvironment: { file: .env }\n",
+        )
+        .unwrap();
+        fs::write(aws.rules(), "version: '1.0'\ndeny: []\naccept: []\n").unwrap();
+
+        let helm = paths.provider("helm");
+        helm.ensure().unwrap();
+        fs::write(
+            helm.config(),
+            "version: '1'\nname: helm\ntool: helm\ndescription: t\ncommand: executable-not-used\ntargeting: { mode: helm_kube_context }\nauth: { strategy: inherited }\nenvironment: { file: .env }\n",
+        )
+        .unwrap();
+        fs::write(helm.rules(), "version: '1.0'\ndeny: []\naccept: ['list']\n").unwrap();
+        let target = helm.target("lab");
+        target.ensure().unwrap();
+        fs::write(
+            target.config(),
+            "version: '1'\nname: lab\ncontext: local\nidentity:\n  provider: aws\n",
+        )
+        .unwrap();
+
+        let registry = ProviderRegistry::load(&paths).unwrap();
+        let provider = registry.get("helm").unwrap();
+        let scope = resolve_scope(&provider, Some("lab"), &["list".into()]).unwrap();
+        assert_eq!(scope.target_args, ["--kube-context", "local"]);
+        assert_eq!(scope.auth.provider, "aws");
+
+        for locked in ["--kube-context=prod", "--kubeconfig", "--kube-token=x"] {
+            let args = vec!["list".to_string(), locked.to_string()];
+            assert!(
+                resolve_scope(&provider, Some("lab"), &args).is_err(),
+                "{locked}"
+            );
+        }
     }
 
     /// No modo `credentials` o alias não acrescenta nada à linha de comando: a

@@ -1,0 +1,24 @@
+version: "1"
+name: helm
+tool: helm
+description: Executa helm em um target Kubernetes controlado pelo Torii.
+command: helm
+args_prefix: []
+
+targeting:
+  mode: helm_kube_context
+
+policy:
+  minimum_accept_tokens: 1
+  # O post-renderer é um executável local escolhido pelo argv: execução
+  # arbitrária no host, fora de qualquer regra. Negado em qualquer posição.
+  forbidden_args:
+    - "--post-renderer"
+    - "--post-renderer-args"
+
+auth:
+  strategy: inherited
+  cache_ttl_seconds: 300
+
+environment:
+  file: .env

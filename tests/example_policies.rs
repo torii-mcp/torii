@@ -38,8 +38,28 @@ fn snow_readonly_setup_compiles_and_decides() {
 
 #[test]
 fn az_and_snow_root_rules_are_empty_and_compile() {
-    for relative in ["az/rules.yaml", "snow/rules.yaml"] {
+    for relative in ["az/rules.yaml", "snow/rules.yaml", "helm/rules.yaml"] {
         let rules = rules::load(&example(relative)).unwrap();
         rules.compile().unwrap();
     }
+}
+
+#[test]
+fn helm_readonly_setup_lists_releases_but_not_their_values() {
+    let rules = rules::load(&example("helm/setups/readonly/rules.yaml")).unwrap();
+    let compiled = rules.compile().unwrap();
+
+    assert!(matches!(
+        compiled.evaluate(&s(&["list", "-n", "apps"]), 1),
+        Evaluation::Allowed { .. }
+    ));
+    assert!(matches!(
+        compiled.evaluate(&s(&["plugin", "install", "x"]), 1),
+        Evaluation::DeniedExplicit { .. }
+    ));
+    // Values carry secrets: never accepted by the setup, left to a human.
+    assert!(!matches!(
+        compiled.evaluate(&s(&["get", "values", "api"]), 1),
+        Evaluation::Allowed { .. }
+    ));
 }

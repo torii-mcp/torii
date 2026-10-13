@@ -103,7 +103,7 @@ pub fn human_binding(provider: &Provider, target_name: &str) -> Result<String> {
                 identity.provider
             )
         }
-        TargetMode::KubectlContext => format!(
+        TargetMode::KubectlContext | TargetMode::HelmKubeContext => format!(
             "context={} · identity provider={} · scope={scope}",
             target.config.context.as_deref().expect("validated context"),
             identity.provider

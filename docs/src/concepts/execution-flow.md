@@ -13,7 +13,7 @@ Considere a chamada à tool `aws`:
 
 O servidor confirma que a tool existe, rejeita campos extras e exige pelo menos um item em `args`. A `description` opcional é reduzida a uma linha sem caracteres de controle e segue apenas até as janelas humanas; ela nunca entra na decisão, na auditoria ou na execução.
 
-Em provider target-aware, exige um alias conhecido, recusa flags bloqueadas e resolve o binding, paths e lock daquele target antes de qualquer leitura de ambiente. `kubectl_context` resolve um context; `aws_profile` resolve profile, conta esperada e região opcional sem expor esses valores ao MCP. O alias pode aparecer no schema e ainda estar inativo: configuração e lease são estados diferentes.
+Em provider target-aware, exige um alias conhecido, recusa flags bloqueadas e resolve o binding, paths e lock daquele target antes de qualquer leitura de ambiente. `kubectl_context` e `helm_kube_context` resolvem um context; `aws_profile` resolve profile, conta esperada e região opcional sem expor esses valores ao MCP. O alias pode aparecer no schema e ainda estar inativo: configuração e lease são estados diferentes.
 
 ## 2. Jasper
 
