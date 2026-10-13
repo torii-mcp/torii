@@ -187,7 +187,7 @@ pub(crate) fn paint_border(ctx: &egui::Context) {
     painter.rect_stroke(
         ctx.screen_rect().shrink(0.5),
         0.0,
-        egui::Stroke::new(1.0, WINDOW_BORDER),
+        egui::Stroke::new(1.0_f32, WINDOW_BORDER),
     );
 }
 
@@ -226,7 +226,7 @@ fn chrome_stroke(ui: &egui::Ui, response: &egui::Response) -> egui::Stroke {
     } else {
         ui.visuals().weak_text_color()
     };
-    egui::Stroke::new(1.4, color)
+    egui::Stroke::new(1.4_f32, color)
 }
 
 fn close_button(ui: &mut egui::Ui, collapsed: bool) -> egui::Response {
