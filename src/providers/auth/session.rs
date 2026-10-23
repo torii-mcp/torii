@@ -159,6 +159,7 @@ async fn ensure_environment(
             .map_or_else(Vec::new, |spec| spec.args.clone()),
         persistent_env: persistent_env.to_vec(),
         environment_templates: templates.clone(),
+        removed_env: removed_env.iter().map(|name| name.to_string()).collect(),
     };
     let prompt = control::ask_auth(
         scope.audit,
@@ -191,12 +192,16 @@ async fn ensure_environment(
 /// scope so the probe does not run on every invocation. This is what turns a
 /// wrong-account session from an opaque downstream failure into an explicit,
 /// pre-flight error naming expected vs. observed identity.
+///
+/// `audit_scope` is the identity provider the events are logged under;
+/// `target` is the alias the errors name, the one the human acts on.
 #[allow(clippy::too_many_arguments)]
 pub async fn verify_identity(
     trail: audit::Trail<'_>,
     probe: &IdentityProbe,
     scope: &AuthPaths,
     audit_scope: &str,
+    target: &str,
     expected: &str,
     persistent_env: &[(String, String)],
     auth_env: &[(String, String)],
@@ -210,7 +215,7 @@ pub async fn verify_identity(
     if !args.iter().any(|arg| arg == "--output") {
         args.extend(["--output".into(), "json".into()]);
     }
-    let observed = exec::run_command_with_removed_env(
+    let output = exec::run_command_with_removed_env(
         &probe.command,
         &[],
         &args,
@@ -219,22 +224,23 @@ pub async fn verify_identity(
         removed_env,
         16 * 1024,
     )
-    .await
-    .ok()
-    .filter(|out| out.exit_code == 0 && !out.truncated)
-    .and_then(|out| identity_field(&out.stdout, &probe.field));
-    let Some(observed) = observed else {
-        trail.event(audit_scope, "identity-check-failed", "");
-        return Err(Error::IdentityCheckFailed {
-            target: audit_scope.into(),
-        });
+    .await;
+    let observed = match probe_identity(output, &probe.field) {
+        Ok(observed) => observed,
+        Err(reason) => {
+            trail.event(audit_scope, "identity-check-failed", "");
+            return Err(Error::IdentityCheckFailed {
+                target: target.into(),
+                reason,
+            });
+        }
     };
     if observed != expected {
         // The observed/expected identities travel only in the returned error,
         // never into the persisted audit log.
         trail.event(audit_scope, "identity-mismatch", "");
         return Err(Error::IdentityMismatch {
-            target: audit_scope.into(),
+            target: target.into(),
             expected: expected.into(),
             actual: observed,
         });
@@ -242,6 +248,27 @@ pub async fn verify_identity(
     record_identity(scope, expected);
     trail.event(audit_scope, "identity-ok", "");
     Ok(())
+}
+
+/// The identity a probe reported, or why it reported none: the reason is what
+/// lets a human tell a refused session from a probe that never reached the
+/// provider.
+fn probe_identity(
+    output: Result<exec::ExecutionResult>,
+    field: &str,
+) -> std::result::Result<String, String> {
+    let output = output.map_err(|error| error.to_string())?;
+    if output.exit_code != 0 {
+        return Err(match exec::last_line(&output.stderr) {
+            Some(line) => format!("probe exited with code {}: {line}", output.exit_code),
+            None => format!("probe exited with code {}", output.exit_code),
+        });
+    }
+    if output.truncated {
+        return Err("probe output exceeded its limit".into());
+    }
+    identity_field(&output.stdout, field)
+        .ok_or_else(|| format!("probe output has no {field:?} field"))
 }
 
 fn identity_field(stdout: &str, field: &str) -> Option<String> {
@@ -302,14 +329,15 @@ async fn validate(
     let Some(spec) = &provider.config.auth.validate else {
         return Ok(true);
     };
-    exec::validate_command_with_removed_env(
+    Ok(exec::validate_command_with_removed_env(
         &spec.command,
         &spec.args,
         persistent_env,
         auth_env,
         removed_env,
     )
-    .await
+    .await?
+    .accepted())
 }
 
 fn validate_required(provider: &Provider, fields: &HashMap<String, String>) -> Result<()> {
@@ -379,4 +407,45 @@ fn session_cached(provider: &Provider, paths: &AuthPaths) -> bool {
 
 fn record_success(paths: &AuthPaths) {
     let _ = std::fs::write(paths.session_cache(), audit::now_epoch().to_string());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn output(exit_code: i32, stdout: &str, stderr: &str) -> Result<exec::ExecutionResult> {
+        Ok(exec::ExecutionResult {
+            exit_code,
+            stdout: stdout.into(),
+            stderr: stderr.into(),
+            truncated: false,
+        })
+    }
+
+    #[test]
+    fn a_probe_reports_the_identity_field() {
+        assert_eq!(
+            probe_identity(output(0, r#"{"Account":"123456789012"}"#, ""), "Account"),
+            Ok("123456789012".into())
+        );
+    }
+
+    /// A failed probe must say why, so a refused session and a probe that never
+    /// reached the provider stop looking the same.
+    #[test]
+    fn a_failed_probe_carries_the_last_stderr_line() {
+        let reason = probe_identity(
+            output(254, "", "\nAn error occurred (ExpiredToken)\n\n"),
+            "Account",
+        )
+        .unwrap_err();
+        assert_eq!(
+            reason,
+            "probe exited with code 254: An error occurred (ExpiredToken)"
+        );
+        assert_eq!(
+            probe_identity(output(0, "{}", ""), "Account").unwrap_err(),
+            "probe output has no \"Account\" field"
+        );
+    }
 }

@@ -134,6 +134,7 @@ impl Invoker {
                 probe,
                 auth_paths,
                 &auth_provider.config.name,
+                &scope.audit_scope,
                 expect,
                 &idp_env,
                 &auth_env,

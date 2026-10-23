@@ -136,6 +136,9 @@ pub struct AuthValidation {
     pub args: Vec<String>,
     pub persistent_env: Vec<(String, String)>,
     pub environment_templates: BTreeMap<String, String>,
+    /// Ambient variables the provider owns, stripped exactly as the server
+    /// strips them, so the window validates the session the call will use.
+    pub removed_env: Vec<String>,
 }
 
 pub async fn ask_access(

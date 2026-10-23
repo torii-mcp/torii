@@ -222,7 +222,7 @@ Esperado: erro estruturado de autenticação cancelada; nenhum arquivo de sessã
 2. Preencher valores temporários deliberadamente inválidos, sem registrá-los na evidência.
 3. Clicar **Validar e usar**.
 4. Confirmar que a mesma janela permanece aberta, o formulário fica bloqueado e um indicador de progresso aparece durante a validação.
-5. Confirmar que o indicador desaparece, o formulário é reabilitado e a mensagem de sessão recusada aparece na mesma janela; clicar **Cancelar**.
+5. Confirmar que o indicador desaparece, o formulário é reabilitado e a mensagem de sessão recusada aparece na mesma janela trazendo o motivo dado pelo validador (por exemplo, o erro da STS); clicar **Cancelar**.
 
 Esperado: comportamento visual descrito acima; `session-candidate-invalid`; nenhum `credentials.env` persistido; nenhum `.session-cache`; nenhum `ran` da operação solicitada.
 

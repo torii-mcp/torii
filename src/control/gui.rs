@@ -18,6 +18,7 @@ use super::{
 use crate::config::{settings, ConfigPaths};
 use crate::error::{Error, Result};
 use crate::providers::AuthField;
+use crate::runtime::exec::Validation;
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -2159,7 +2160,8 @@ struct AuthApp {
 
 enum AuthValidationOutcome {
     Accepted,
-    Rejected,
+    /// The validator ran and refused; carries what it said, for the window.
+    Rejected(String),
     Failed,
 }
 
@@ -2412,16 +2414,27 @@ impl AuthApp {
             let outcome = match validation.command {
                 None => AuthValidationOutcome::Accepted,
                 Some(command) => match tokio::runtime::Runtime::new() {
-                    Ok(runtime) => match runtime.block_on(crate::runtime::exec::validate_command(
-                        &command,
-                        &validation.args,
-                        &validation.persistent_env,
-                        &auth_env,
-                    )) {
-                        Ok(true) => AuthValidationOutcome::Accepted,
-                        Ok(false) => AuthValidationOutcome::Rejected,
-                        Err(_) => AuthValidationOutcome::Failed,
-                    },
+                    Ok(runtime) => {
+                        let removed_env: Vec<&str> =
+                            validation.removed_env.iter().map(String::as_str).collect();
+                        match runtime.block_on(
+                            crate::runtime::exec::validate_command_with_removed_env(
+                                &command,
+                                &validation.args,
+                                &validation.persistent_env,
+                                &auth_env,
+                                &removed_env,
+                            ),
+                        ) {
+                            Ok(Validation::Accepted) => AuthValidationOutcome::Accepted,
+                            Ok(Validation::Rejected { exit_code, reason }) => {
+                                AuthValidationOutcome::Rejected(reason.unwrap_or_else(|| {
+                                    format!("{command} saiu com código {exit_code}")
+                                }))
+                            }
+                            Err(_) => AuthValidationOutcome::Failed,
+                        }
+                    }
                     Err(_) => AuthValidationOutcome::Failed,
                 },
             };
@@ -2452,10 +2465,10 @@ impl AuthApp {
                 self.error = None;
                 ctx.request_repaint_after(PROMPT_TERMINAL_VISIBLE_FOR);
             }
-            Ok((AuthValidationOutcome::Rejected, _)) => {
+            Ok((AuthValidationOutcome::Rejected(reason), _)) => {
                 self.pending = None;
                 *self.invalid_attempts.borrow_mut() += 1;
-                self.error = Some("Sessão recusada. Revise os dados e tente novamente.".into());
+                self.error = Some(format!("Sessão recusada: {reason}"));
             }
             Ok((AuthValidationOutcome::Failed, _)) => {
                 self.pending = None;

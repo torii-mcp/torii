@@ -116,14 +116,26 @@ pub fn spawn_command_with_removed_env(
     })
 }
 
-pub async fn validate_command(
-    program: &str,
-    args: &[String],
-    persistent_env: &[(String, String)],
-    auth_env: &[(String, String)],
-) -> Result<bool> {
-    validate_command_with_removed_env(program, args, persistent_env, auth_env, &[]).await
+/// What a validation command said about a candidate session.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Validation {
+    Accepted,
+    /// The command refused. `reason` is the last line it wrote to stderr, for
+    /// the human in the authentication window only; it never goes to a log.
+    Rejected {
+        exit_code: i32,
+        reason: Option<String>,
+    },
 }
+
+impl Validation {
+    pub fn accepted(&self) -> bool {
+        matches!(self, Self::Accepted)
+    }
+}
+
+/// Longest stderr line kept, in characters: enough for any CLI error.
+const VALIDATION_REASON_MAX_CHARS: usize = 400;
 
 pub async fn validate_command_with_removed_env(
     program: &str,
@@ -131,22 +143,38 @@ pub async fn validate_command_with_removed_env(
     persistent_env: &[(String, String)],
     auth_env: &[(String, String)],
     removed_env: &[&str],
-) -> Result<bool> {
+) -> Result<Validation> {
     let mut command = Command::new(program::resolve(program)?);
     command
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .kill_on_drop(true);
     remove_environment(&mut command, removed_env);
     command.envs(persistent_env.iter().cloned());
     command.envs(auth_env.iter().cloned());
-    let status = command.status().await.map_err(|source| Error::Spawn {
+    let output = command.output().await.map_err(|source| Error::Spawn {
         program: program.to_string(),
         source,
     })?;
-    Ok(status.success())
+    if output.status.success() {
+        return Ok(Validation::Accepted);
+    }
+    Ok(Validation::Rejected {
+        exit_code: output.status.code().unwrap_or(SIGNAL_EXIT),
+        reason: last_line(&String::from_utf8_lossy(&output.stderr)),
+    })
+}
+
+/// The last non-empty line of a program's stderr: where CLIs put the error that
+/// made them fail. Bounded so a misbehaving program cannot flood a message.
+pub fn last_line(stderr: &str) -> Option<String> {
+    stderr
+        .lines()
+        .map(str::trim)
+        .rfind(|line| !line.is_empty())
+        .map(|line| line.chars().take(VALIDATION_REASON_MAX_CHARS).collect())
 }
 
 pub fn interpolate_environment(
@@ -271,6 +299,76 @@ mod tests {
         assert!(
             matches!(error, Error::ProgramNotFound { .. }),
             "unexpected: {error}"
+        );
+    }
+
+    /// A rejected session must tell the human why: the validator's last stderr
+    /// line, not a generic refusal.
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn a_rejected_validation_reports_the_last_stderr_line() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let refuses = temp.path().join("refuses.cmd");
+        std::fs::write(
+            &refuses,
+            "@echo off\r\necho. 1>&2\r\necho An error occurred (ExpiredToken) 1>&2\r\necho. 1>&2\r\nexit /b 254\r\n",
+        )
+        .unwrap();
+        let accepts = temp.path().join("accepts.cmd");
+        std::fs::write(&accepts, "@echo off\r\nexit /b 0\r\n").unwrap();
+        let silent = temp.path().join("silent.cmd");
+        std::fs::write(&silent, "@echo off\r\nexit /b 3\r\n").unwrap();
+
+        let run = |path: &std::path::Path| {
+            let program = path.to_string_lossy().to_string();
+            async move {
+                validate_command_with_removed_env(&program, &[], &[], &[], &[])
+                    .await
+                    .unwrap()
+            }
+        };
+
+        assert_eq!(
+            run(&refuses).await,
+            Validation::Rejected {
+                exit_code: 254,
+                reason: Some("An error occurred (ExpiredToken)".into()),
+            }
+        );
+        assert_eq!(run(&accepts).await, Validation::Accepted);
+        assert_eq!(
+            run(&silent).await,
+            Validation::Rejected {
+                exit_code: 3,
+                reason: None,
+            }
+        );
+    }
+
+    /// The refusal reason survives a validator that floods stdout: stdout is
+    /// discarded, so it cannot use up the room meant for stderr.
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn a_noisy_stdout_does_not_hide_the_refusal_reason() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let noisy = temp.path().join("noisy.cmd");
+        std::fs::write(
+            &noisy,
+            "@echo off\r\nfor /l %%i in (1,1,2000) do echo filler line %%i\r\necho token expired 1>&2\r\nexit /b 1\r\n",
+        )
+        .unwrap();
+        let program = noisy.to_string_lossy().to_string();
+
+        let validation = validate_command_with_removed_env(&program, &[], &[], &[], &[])
+            .await
+            .unwrap();
+
+        assert_eq!(
+            validation,
+            Validation::Rejected {
+                exit_code: 1,
+                reason: Some("token expired".into()),
+            }
         );
     }
 

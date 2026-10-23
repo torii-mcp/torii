@@ -51,8 +51,8 @@ pub enum Error {
     SessionInvalid { provider: String },
     #[error("AWS profile target {target:?} needs human authentication; authenticate its configured AWS CLI profile and retry")]
     AwsProfileAuthenticationRequired { target: String },
-    #[error("could not verify the active identity for target {target:?}; ask a human to authenticate the configured session and retry")]
-    IdentityCheckFailed { target: String },
+    #[error("could not verify the active identity for target {target:?}: {reason}; ask a human to authenticate the configured session and retry")]
+    IdentityCheckFailed { target: String, reason: String },
     #[error("target {target:?} expects identity {expected:?} but the active session is {actual:?}; authenticate the correct identity and retry")]
     IdentityMismatch {
         target: String,
