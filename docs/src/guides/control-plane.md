@@ -43,7 +43,7 @@ Upgrade usa a origem gravada no lock. Ele substitui `provider.yaml` e metadados/
 
 ```powershell
 torii init
-torii config-dir
+torii config dir show
 ```
 
 Init cria somente settings e raiz. Providers são sempre uma escolha explícita.

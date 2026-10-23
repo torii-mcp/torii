@@ -10,10 +10,12 @@ use eframe::egui;
 use serde::{Deserialize, Serialize};
 
 use super::chrome::{self, ChromeEvent, WindowState, TITLE_BAR_HEIGHT};
+use super::theme::{self, palette};
 use super::{
     AccessChoice, ActiveTargetAuthorization, AuthPromptResult, AuthValidation, GrantSelection,
     PermanentPolicy, TargetAccessChoice,
 };
+use crate::config::{settings, ConfigPaths};
 use crate::error::{Error, Result};
 use crate::providers::AuthField;
 
@@ -171,6 +173,7 @@ async fn invoke_child(request: PromptRequest) -> Result<PromptResponse> {
 }
 
 pub fn run_child() -> i32 {
+    install_appearance();
     let stdin = std::io::stdin();
     let request = serde_json::from_reader::<_, PromptRequest>(BufReader::new(stdin.lock()));
     match request {
@@ -247,6 +250,16 @@ pub fn run_child() -> i32 {
     }
 }
 
+/// The human's theme and folded bar color, read as the window opens so a
+/// `torii config` change applies without restarting the server. Unreadable
+/// settings fall back to the defaults: the prompt must still open.
+fn install_appearance() {
+    let settings = ConfigPaths::discover()
+        .and_then(|paths| settings::load(&paths.settings()))
+        .unwrap_or_default();
+    theme::install(settings.theme, settings.folded_bar_color);
+}
+
 fn native_options(width: f32, height: f32) -> eframe::NativeOptions {
     eframe::NativeOptions {
         centered: true,
@@ -303,20 +316,6 @@ const DURATION_PRESET_WIDTH: f32 = 46.0;
 const TOKEN_COMPACT_CHARS: usize = 48;
 const TOKEN_TOOLTIP_CHARS: usize = 512;
 const TOKEN_DETAIL_PAGE_CHARS: usize = 4096;
-
-const FIXED_GROUP_BG: egui::Color32 = egui::Color32::from_rgb(22, 42, 48);
-const FIXED_PILL_BG: egui::Color32 = egui::Color32::from_rgb(32, 61, 74);
-const FIXED_STROKE: egui::Color32 = egui::Color32::from_rgb(86, 182, 194);
-const FIXED_TEXT: egui::Color32 = egui::Color32::from_rgb(229, 246, 248);
-const FREE_GROUP_BG: egui::Color32 = egui::Color32::from_rgb(32, 35, 42);
-const FREE_PILL_BG: egui::Color32 = egui::Color32::from_rgb(44, 49, 58);
-const FREE_STROKE: egui::Color32 = egui::Color32::from_rgb(92, 99, 112);
-const FREE_TEXT: egui::Color32 = egui::Color32::from_rgb(198, 203, 211);
-const BOUNDARY_ACCENT: egui::Color32 = egui::Color32::from_rgb(229, 192, 123);
-const SCOPE_SUMMARY_BG: egui::Color32 = egui::Color32::from_rgb(45, 40, 28);
-const PERMANENT_ACCEPT_STROKE: egui::Color32 = egui::Color32::from_rgb(120, 174, 108);
-const PERMANENT_DENY_STROKE: egui::Color32 = egui::Color32::from_rgb(224, 108, 117);
-const PERMANENT_DENY_PROGRESS_BG: egui::Color32 = egui::Color32::from_rgb(112, 47, 51);
 
 /// `5 min`, `4 min 30 s` — for sentences.
 fn spelled_duration(seconds: u32) -> String {
@@ -501,7 +500,7 @@ impl eframe::App for AccessApp {
         }
         let decided = decision.is_some();
 
-        chrome::paint_border(ctx);
+        chrome::paint_border(ctx, self.window.collapsed());
         let mut confirmed_from_bar = false;
         let collapsed = self.window.collapsed();
         let armed = self.window.quick_actions_armed(ctx);
@@ -546,14 +545,12 @@ impl eframe::App for AccessApp {
                     egui::Layout::left_to_right(egui::Align::Center),
                     |ui| match decision {
                         Some(AccessChoice::Deny) => {
-                            ui.label(
-                                egui::RichText::new("Acesso negado.").color(PROMPT_ERROR_COLOR),
-                            );
+                            ui.label(egui::RichText::new("Acesso negado.").color(palette().error));
                         }
                         Some(AccessChoice::AllowOnce) => {
                             ui.label(
                                 egui::RichText::new("👍 Acesso autorizado uma vez.")
-                                    .color(PROMPT_SUCCESS_COLOR),
+                                    .color(palette().success),
                             );
                         }
                         Some(AccessChoice::AllowFor { seconds, .. }) => {
@@ -562,7 +559,7 @@ impl eframe::App for AccessApp {
                                     "👍 Acesso autorizado por {}.",
                                     spelled_duration(seconds)
                                 ))
-                                .color(PROMPT_SUCCESS_COLOR),
+                                .color(palette().success),
                             );
                         }
                         Some(AccessChoice::AllowAlways { prefix_len }) => {
@@ -572,7 +569,7 @@ impl eframe::App for AccessApp {
                                     self.permanent_rule(prefix_len),
                                     self.permanent.scope
                                 ))
-                                .color(PROMPT_SUCCESS_COLOR),
+                                .color(palette().success),
                             );
                         }
                         Some(AccessChoice::DenyAlways { prefix_len }) => {
@@ -582,7 +579,7 @@ impl eframe::App for AccessApp {
                                     self.permanent_rule(prefix_len),
                                     self.permanent.scope
                                 ))
-                                .color(PROMPT_ERROR_COLOR),
+                                .color(palette().error),
                             );
                         }
                         None if self.timed => {
@@ -621,7 +618,7 @@ impl eframe::App for AccessApp {
             .show_separator_line(false)
             .frame(
                 egui::Frame::none()
-                    .fill(SCOPE_SUMMARY_BG)
+                    .fill(palette().scope_summary_bg)
                     .inner_margin(egui::Margin::symmetric(8.0, 0.0)),
             )
             .show(ctx, |ui| {
@@ -629,7 +626,7 @@ impl eframe::App for AccessApp {
                     ui.label(
                         egui::RichText::new(self.scope_summary())
                             .strong()
-                            .color(BOUNDARY_ACCENT),
+                            .color(palette().boundary_accent),
                     );
                 });
             });
@@ -706,7 +703,13 @@ impl AccessApp {
             focused,
             Instant::now(),
         );
-        paint_hold_bar(ui, &slots, &response, progress, HOLD_PROGRESS_BG);
+        paint_hold_bar(
+            ui,
+            &slots,
+            &response,
+            progress,
+            theme::hold_progress(compact),
+        );
         if pressing {
             ctx.request_repaint_after(Duration::from_millis(16));
         }
@@ -924,7 +927,7 @@ impl AccessApp {
                         egui::RichText::new(
                             "Decisão permanente fica disponível ao escolher um prefixo: uma regra literal sempre casa por prefixo.",
                         )
-                        .color(BOUNDARY_ACCENT),
+                        .color(palette().boundary_accent),
                     );
                 }
                 ui.small("Denies explícitos continuam prevalecendo.");
@@ -1084,8 +1087,16 @@ impl AccessApp {
             ),
         };
         let (stroke, progress_bg, vector) = match kind {
-            PermanentKind::Accept => (PERMANENT_ACCEPT_STROKE, HOLD_PROGRESS_BG, "accept"),
-            PermanentKind::Deny => (PERMANENT_DENY_STROKE, PERMANENT_DENY_PROGRESS_BG, "deny"),
+            PermanentKind::Accept => (
+                palette().permanent_accept_stroke,
+                palette().hold_progress_bg,
+                "accept",
+            ),
+            PermanentKind::Deny => (
+                palette().permanent_deny_stroke,
+                palette().permanent_deny_progress_bg,
+                "deny",
+            ),
         };
 
         let since_open = self.opened_at.elapsed();
@@ -1175,7 +1186,7 @@ impl AccessApp {
         if let Some(reason) = option.shared_block() {
             ui.small(
                 egui::RichText::new(format!("Decisão permanente indisponível: {reason}"))
-                    .color(BOUNDARY_ACCENT),
+                    .color(palette().boundary_accent),
             );
             return;
         }
@@ -1187,7 +1198,7 @@ impl AccessApp {
             .into_iter()
             .flatten()
         {
-            ui.small(egui::RichText::new(reason.clone()).color(BOUNDARY_ACCENT));
+            ui.small(egui::RichText::new(reason.clone()).color(palette().boundary_accent));
         }
     }
 
@@ -1208,8 +1219,8 @@ impl AccessApp {
 
     fn render_prefix_editor(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, decided: bool) {
         let fixed_frame = egui::Frame::group(ui.style())
-            .fill(FIXED_GROUP_BG)
-            .stroke(egui::Stroke::new(1.0_f32, FIXED_STROKE))
+            .fill(palette().fixed_group_bg)
+            .stroke(egui::Stroke::new(1.0_f32, palette().fixed_stroke))
             .inner_margin(egui::Margin::same(8.0));
         fixed_frame.show(ui, |ui| {
             ui.set_min_width(ui.available_width());
@@ -1218,7 +1229,7 @@ impl AccessApp {
                     egui::RichText::new(format!("PERMANECEM IGUAIS · {}", self.prefix_len))
                         .small()
                         .strong()
-                        .color(FIXED_STROKE),
+                        .color(palette().fixed_stroke),
                 );
                 // The permanent buttons live here, in the corner of the box that
                 // shows the tokens the rule is made of: the boundary is tuned
@@ -1233,9 +1244,9 @@ impl AccessApp {
                     self.render_token(
                         ui,
                         index,
-                        FIXED_PILL_BG,
-                        egui::Stroke::new(1.0_f32, FIXED_STROKE),
-                        FIXED_TEXT,
+                        palette().fixed_pill_bg,
+                        egui::Stroke::new(1.0_f32, palette().fixed_stroke),
+                        palette().fixed_text,
                         true,
                     );
                 }
@@ -1245,8 +1256,8 @@ impl AccessApp {
 
         ui.add_space(6.0);
         let free_frame = egui::Frame::group(ui.style())
-            .fill(FREE_GROUP_BG)
-            .stroke(egui::Stroke::new(1.0_f32, FREE_STROKE))
+            .fill(palette().free_group_bg)
+            .stroke(egui::Stroke::new(1.0_f32, palette().free_stroke))
             .inner_margin(egui::Margin::same(8.0));
         free_frame.show(ui, |ui| {
             ui.set_min_width(ui.available_width());
@@ -1257,16 +1268,16 @@ impl AccessApp {
                 ))
                 .small()
                 .strong()
-                .color(FREE_TEXT),
+                .color(palette().free_text),
             );
             ui.horizontal_wrapped(|ui| {
                 for index in self.prefix_len..self.args.len() {
                     self.render_token(
                         ui,
                         index,
-                        FREE_PILL_BG,
-                        egui::Stroke::new(1.0_f32, FREE_STROKE),
-                        FREE_TEXT,
+                        palette().free_pill_bg,
+                        egui::Stroke::new(1.0_f32, palette().free_stroke),
+                        palette().free_text,
                         true,
                     );
                 }
@@ -1274,10 +1285,10 @@ impl AccessApp {
                     egui::Button::new(
                         egui::RichText::new("+ zero ou mais argumentos futuros")
                             .small()
-                            .color(BOUNDARY_ACCENT),
+                            .color(palette().boundary_accent),
                     )
-                    .fill(FREE_GROUP_BG)
-                    .stroke(egui::Stroke::new(1.5_f32, BOUNDARY_ACCENT))
+                    .fill(palette().free_group_bg)
+                    .stroke(egui::Stroke::new(1.5_f32, palette().boundary_accent))
                     .sense(egui::Sense::hover()),
                 )
                 .on_hover_text(
@@ -1413,7 +1424,7 @@ impl AccessApp {
     }
 }
 
-fn access_window(
+pub(super) fn access_window(
     provider: String,
     args: Vec<String>,
     default_minutes: u32,
@@ -1436,7 +1447,8 @@ fn access_window(
     eframe::run_native(
         "Torii — autorização",
         native_options(ACCESS_WIDTH, ACCESS_ONCE_HEIGHT),
-        Box::new(move |_| {
+        Box::new(move |cc| {
+            theme::apply(&cc.egui_ctx);
             Ok(Box::new(AccessApp {
                 provider,
                 prefix_len: args.len().max(1),
@@ -1488,11 +1500,6 @@ const PERMANENT_ARMING_DELAY: Duration = Duration::from_millis(1500);
 const PERMANENT_BUTTON_WIDTH: f32 = 178.0;
 const TARGET_ADD_BUTTON_WIDTH: f32 = 214.0;
 const ALLOW_HOLD_BUTTON_WIDTH: f32 = 232.0;
-const TARGET_WARNING_BG: egui::Color32 = egui::Color32::from_rgb(63, 31, 31);
-const TARGET_WARNING_STROKE: egui::Color32 = egui::Color32::from_rgb(224, 108, 117);
-const HOLD_PROGRESS_BG: egui::Color32 = egui::Color32::from_rgb(77, 105, 58);
-const AGENT_DESCRIPTION_BG: egui::Color32 = egui::Color32::from_rgb(28, 36, 54);
-const AGENT_DESCRIPTION_STROKE: egui::Color32 = egui::Color32::from_rgb(122, 162, 247);
 const AGENT_DESCRIPTION_BASE_HEIGHT: f32 = 40.0;
 const AGENT_DESCRIPTION_LINE_HEIGHT: f32 = 20.0;
 
@@ -1542,7 +1549,7 @@ impl eframe::App for TargetAccessApp {
         let no_active = self.active_targets.is_empty();
 
         self.window.apply(ctx);
-        chrome::paint_border(ctx);
+        chrome::paint_border(ctx, self.window.collapsed());
         let mut quick_replace = false;
         let label = if no_active {
             format!("Autorizar por {} min", self.minutes)
@@ -1610,7 +1617,7 @@ impl eframe::App for TargetAccessApp {
                         Some(TargetAccessChoice::Deny) => {
                             ui.label(
                                 egui::RichText::new("Target negado.")
-                                    .color(PROMPT_ERROR_COLOR),
+                                    .color(palette().error),
                             );
                         }
                         Some(TargetAccessChoice::Replace { minutes }) => {
@@ -1618,7 +1625,7 @@ impl eframe::App for TargetAccessApp {
                                 egui::RichText::new(format!(
                                     "👍 Targets anteriores desativados; novo target autorizado por {minutes} min."
                                 ))
-                                .color(PROMPT_SUCCESS_COLOR),
+                                .color(palette().success),
                             );
                         }
                         Some(TargetAccessChoice::Add { minutes }) => {
@@ -1626,7 +1633,7 @@ impl eframe::App for TargetAccessApp {
                                 egui::RichText::new(format!(
                                     "👍 Target adicionado por {minutes} min; os anteriores continuam ativos."
                                 ))
-                                .color(PROMPT_SUCCESS_COLOR),
+                                .color(palette().success),
                             );
                         }
                         None => {
@@ -1697,8 +1704,8 @@ impl eframe::App for TargetAccessApp {
                 .show(ctx, |ui| {
                     let content_width = (ui.available_width() - 20.0).max(0.0);
                     egui::Frame::none()
-                        .fill(TARGET_WARNING_BG)
-                        .stroke(egui::Stroke::new(1.0_f32, TARGET_WARNING_STROKE))
+                        .fill(palette().target_warning_bg)
+                        .stroke(egui::Stroke::new(1.0_f32, palette().target_warning_stroke))
                         .inner_margin(egui::Margin::same(10.0))
                         .show(ui, |ui| {
                             ui.set_min_width(content_width);
@@ -1707,7 +1714,7 @@ impl eframe::App for TargetAccessApp {
                                     "ATENÇÃO: adicionar deixará {active_after_add} targets autorizados ao mesmo tempo."
                                 ))
                                 .strong()
-                                .color(PROMPT_ERROR_COLOR),
+                                .color(palette().error),
                             );
                             ui.label(
                                 "O agente poderá escolher qualquer um deles durante a validade de cada autorização.",
@@ -1737,7 +1744,7 @@ impl eframe::App for TargetAccessApp {
                     egui::RichText::new(&self.requested_target)
                         .monospace()
                         .strong()
-                        .color(BOUNDARY_ACCENT),
+                        .color(palette().boundary_accent),
                 );
                 ui.label(egui::RichText::new("Binding humano").small().strong());
                 ui.add(
@@ -1860,7 +1867,13 @@ impl TargetAccessApp {
             focused,
             Instant::now(),
         );
-        paint_hold_bar(ui, &slots, &response, progress, HOLD_PROGRESS_BG);
+        paint_hold_bar(
+            ui,
+            &slots,
+            &response,
+            progress,
+            theme::hold_progress(compact),
+        );
         if pressing {
             ctx.request_repaint_after(Duration::from_millis(16));
         }
@@ -1889,7 +1902,8 @@ fn target_access_window(
     let _ = eframe::run_native(
         "Torii — autorização de target",
         native_options(TARGET_ACCESS_WIDTH, height),
-        Box::new(move |_| {
+        Box::new(move |cc| {
+            theme::apply(&cc.egui_ctx);
             Ok(Box::new(TargetAccessApp {
                 provider,
                 requested_target,
@@ -1934,8 +1948,11 @@ fn agent_description_height(description: Option<&str>) -> f32 {
 fn render_agent_description(ui: &mut egui::Ui, description: Option<&str>) {
     let content_width = (ui.available_width() - 18.0).max(0.0);
     egui::Frame::none()
-        .fill(AGENT_DESCRIPTION_BG)
-        .stroke(egui::Stroke::new(1.0_f32, AGENT_DESCRIPTION_STROKE))
+        .fill(palette().agent_description_bg)
+        .stroke(egui::Stroke::new(
+            1.0_f32,
+            palette().agent_description_stroke,
+        ))
         .inner_margin(egui::Margin::same(8.0))
         .show(ui, |ui| {
             ui.set_min_width(content_width);
@@ -1944,11 +1961,14 @@ fn render_agent_description(ui: &mut egui::Ui, description: Option<&str>) {
                 egui::RichText::new("Motivo informado pelo agente · não verificado")
                     .small()
                     .strong()
-                    .color(AGENT_DESCRIPTION_STROKE),
+                    .color(palette().agent_description_stroke),
             );
             match description {
                 Some(text) => {
-                    ui.add(egui::Label::new(egui::RichText::new(text).color(FIXED_TEXT)).wrap());
+                    ui.add(
+                        egui::Label::new(egui::RichText::new(text).color(palette().fixed_text))
+                            .wrap(),
+                    );
                 }
                 None => {
                     ui.label(
@@ -2153,8 +2173,6 @@ const PASTE_LABEL: &str = "Colar atribuições do clipboard";
 const PASTE_AND_VALIDATE_LABEL: &str = "Colar atribuições do clipboard e validar";
 const PROMPT_ACTIONS_HEIGHT: f32 = 32.0;
 const PROMPT_STATUS_BAR_HEIGHT: f32 = 24.0;
-const PROMPT_ERROR_COLOR: egui::Color32 = egui::Color32::from_rgb(224, 108, 117);
-const PROMPT_SUCCESS_COLOR: egui::Color32 = egui::Color32::from_rgb(152, 195, 121);
 const PROMPT_TERMINAL_VISIBLE_FOR: Duration = Duration::from_millis(650);
 const PERMANENT_TERMINAL_VISIBLE_FOR: Duration = Duration::from_millis(2200);
 
@@ -2169,7 +2187,7 @@ impl eframe::App for AuthApp {
         }
 
         self.window.apply(ctx);
-        chrome::paint_border(ctx);
+        chrome::paint_border(ctx, self.window.collapsed());
         let mut quick = AuthQuickAction::None;
         let armed = self.window.quick_actions_armed(ctx);
         let event = chrome::title_bar(ctx, &self.title(), self.window.collapsed(), armed, |ui| {
@@ -2221,11 +2239,11 @@ impl eframe::App for AuthApp {
                         ui.label("Validando sessão…");
                     } else if succeeded {
                         ui.label(
-                            egui::RichText::new("👍 Sessão validada.").color(PROMPT_SUCCESS_COLOR),
+                            egui::RichText::new("👍 Sessão validada.").color(palette().success),
                         );
                     } else if let Some(error) = &self.error {
                         ui.add(
-                            egui::Label::new(egui::RichText::new(error).color(PROMPT_ERROR_COLOR))
+                            egui::Label::new(egui::RichText::new(error).color(palette().error))
                                 .truncate(),
                         )
                         .on_hover_text(error);
@@ -2263,7 +2281,7 @@ impl eframe::App for AuthApp {
                 .show_separator_line(false)
                 .frame(
                     egui::Frame::none()
-                        .fill(SCOPE_SUMMARY_BG)
+                        .fill(palette().scope_summary_bg)
                         .inner_margin(egui::Margin::symmetric(8.0, 0.0)),
                 )
                 .show(ctx, |ui| {
@@ -2273,7 +2291,7 @@ impl eframe::App for AuthApp {
                             egui::RichText::new(target)
                                 .monospace()
                                 .strong()
-                                .color(BOUNDARY_ACCENT),
+                                .color(palette().boundary_accent),
                         );
                     });
                 });
@@ -2489,7 +2507,8 @@ fn auth_window(
     let _ = eframe::run_native(
         "Torii — autenticação",
         native_options(AUTH_WINDOW_WIDTH, height),
-        Box::new(move |_| {
+        Box::new(move |cc| {
+            theme::apply(&cc.egui_ctx);
             Ok(Box::new(AuthApp {
                 provider,
                 target,

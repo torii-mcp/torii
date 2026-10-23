@@ -44,7 +44,7 @@ terminal depois.
 ```powershell
 torii --version          # confirma o binário
 torii init               # cria a raiz e settings.yaml
-torii config-dir         # mostra a raiz efetiva
+torii config dir show    # mostra a raiz efetiva
 torii self upgrade       # troca o binário pela última release; --check só informa
 ```
 
@@ -218,6 +218,19 @@ epoch | escopo | evento | regra-curta | detalhe
 Sem credenciais, clipboard ou saída completa. Escrita best-effort: é observabilidade local,
 não ledger de compliance. Ver [Auditoria](../reference/audit.md).
 
+## Aparência das janelas
+
+```powershell
+torii config list               # preferências, valor atual e padrão
+torii config theme list         # dark (padrão), light ou nord
+torii config theme test light   # janela de teste no tema, sem gravar
+torii config theme set light
+torii config fbc set salvia     # cor da barra dobrada: nome, theme ou '#rrggbb'
+torii config fbc reset          # volta para rosa-antigo
+```
+
+Ver [Personalizar as janelas](../guides/appearance.md).
+
 ## Quando reiniciar o servidor MCP
 
 | Mudança | Reiniciar? |
@@ -228,12 +241,13 @@ não ledger de compliance. Ver [Auditoria](../reference/audit.md).
 | instalar, atualizar ou remover provider | sim |
 | criar ou remover target | sim |
 | alterar `PATH` ou `TORII_CONFIG_DIR` | sim |
+| trocar tema ou cor da barra dobrada (`torii config`) | não; vale a partir da próxima janela |
 
 ## Diagnóstico rápido
 
 | Sintoma | Primeira verificação |
 |---|---|
-| `no providers installed` | `torii config-dir` e `torii provider list`; `init` não instala providers |
+| `no providers installed` | `torii config dir show` e `torii provider list`; `init` não instala providers |
 | `rules file not found` | o provider não tem `rules.yaml`; não existe fallback permissivo |
 | `could not find the executable ... in PATH` | `where <cli>` no mesmo terminal e reinicie o cliente MCP |
 | negado sem abrir janela | casou um `deny`, ou `TORII_NO_GUI` está setado |

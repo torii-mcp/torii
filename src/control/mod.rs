@@ -1,5 +1,7 @@
 mod chrome;
 pub mod gui;
+pub mod preview;
+mod theme;
 
 use crate::error::Result;
 use crate::providers::AuthField;

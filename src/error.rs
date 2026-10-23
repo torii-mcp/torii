@@ -65,6 +65,11 @@ pub enum Error {
     AuthStrategyNotImplemented { provider: String, strategy: String },
     #[error("invalid MCP tool arguments: {0}")]
     InvalidArguments(String),
+    /// A command line the CLI does not accept, with the usage to fix it.
+    #[error("{0}")]
+    Usage(String),
+    #[error("invalid setting: {0}")]
+    InvalidSetting(String),
     #[error("MCP server failed: {0}")]
     Mcp(String),
     #[error("GUI prompt failed: {0}")]

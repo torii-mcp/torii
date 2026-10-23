@@ -5,16 +5,18 @@
 //! buttons, so the windows are undecorated and draw this bar instead: it drags
 //! the window, closes it, and collapses it to its own height. Collapsed, the
 //! bar keeps the window's primary action within one click, so a prompt can be
-//! parked out of the way without losing the ability to answer it.
+//! parked out of the way without losing the ability to answer it. A parked
+//! window is also repainted in the folded bar color the human chose, so it can
+//! be found again over whatever page it sits on.
 
 use eframe::egui;
+
+use super::theme;
 
 /// Height of the custom title bar, and of the whole window when collapsed.
 pub(crate) const TITLE_BAR_HEIGHT: f32 = 30.0;
 
 const BAR_BUTTON_WIDTH: f32 = 26.0;
-const TITLE_BAR_BG: egui::Color32 = egui::Color32::from_rgb(38, 38, 42);
-const WINDOW_BORDER: egui::Color32 = egui::Color32::from_rgb(90, 90, 98);
 
 /// What the human asked of the chrome on this frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -129,16 +131,21 @@ pub(crate) fn title_bar(
     quick: impl FnOnce(&mut egui::Ui),
 ) -> ChromeEvent {
     let mut event = ChromeEvent::None;
+    let folded = theme::folded_bar().filter(|_| collapsed);
+    let fill = folded.map_or(theme::palette().title_bar_bg, |bar| bar.fill);
     egui::TopBottomPanel::top("torii_title_bar")
         .resizable(false)
         .exact_height(TITLE_BAR_HEIGHT)
         .show_separator_line(true)
         .frame(
             egui::Frame::none()
-                .fill(TITLE_BAR_BG)
+                .fill(fill)
                 .inner_margin(egui::Margin::symmetric(8.0, 0.0)),
         )
         .show(ctx, |ui| {
+            if let Some(bar) = folded {
+                bar.apply(ui.visuals_mut());
+            }
             // Claimed before the buttons so they keep the clicks that land on
             // them: the bar itself only drags where no button sits.
             let bar = ui.interact(
@@ -179,7 +186,11 @@ pub(crate) fn title_bar(
 
 /// An undecorated window has no frame of its own; outline it so it stays
 /// readable over whatever it covers.
-pub(crate) fn paint_border(ctx: &egui::Context) {
+pub(crate) fn paint_border(ctx: &egui::Context, collapsed: bool) {
+    let color = match theme::folded_bar() {
+        Some(bar) if collapsed => bar.border,
+        _ => theme::palette().window_border,
+    };
     let painter = ctx.layer_painter(egui::LayerId::new(
         egui::Order::Foreground,
         egui::Id::new("torii_window_border"),
@@ -187,7 +198,7 @@ pub(crate) fn paint_border(ctx: &egui::Context) {
     painter.rect_stroke(
         ctx.screen_rect().shrink(0.5),
         0.0,
-        egui::Stroke::new(1.0_f32, WINDOW_BORDER),
+        egui::Stroke::new(1.0_f32, color),
     );
 }
 

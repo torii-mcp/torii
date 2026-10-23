@@ -1,3 +1,4 @@
+pub mod appearance;
 pub mod env_file;
 pub mod paths;
 pub mod settings;

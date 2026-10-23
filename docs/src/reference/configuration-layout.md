@@ -57,9 +57,13 @@ O diretório padrão é `~/.config/torii`. `TORII_CONFIG_DIR` substitui a raiz i
 max_output_bytes: 262144
 default_grant_minutes: 2
 default_target_minutes: 15
+theme: dark
+folded_bar_color: rosa-antigo
 ```
 
 `max_output_bytes` limita o conteúdo combinado devolvido; `default_grant_minutes` define o valor inicial da aprovação temporária de uma operação; `default_target_minutes` define o valor inicial do lease de um alias target-aware. Leases aceitam de 1 a 1.440 minutos.
+
+`theme` (`dark`, `light` ou `nord`) e `folded_bar_color` (um nome da lista, `theme` ou `#rrggbb`) são as preferências das janelas, trocadas pelo `torii config` e lidas a cada janela aberta. Ver [Personalizar as janelas](../guides/appearance.md).
 
 ## Arquivos gerenciados
 

@@ -2,26 +2,37 @@
 
 Esta CLI pertence ao humano e nunca é publicada como tools MCP.
 
-Todos os níveis aceitam `--help` ou `-h`; `torii help <comando>` e a forma em camadas `torii provider help install` são equivalentes. Por exemplo:
+Todo comando tem help, em qualquer uma destas formas, que são equivalentes:
 
 ```text
-torii --help
-torii reauth --help
-torii provider --help
-torii provider install --help
+torii help config theme
+torii config help theme
+torii config theme help
+torii config theme --help
 ```
+
+`--help` e `-h` valem também depois de valores (`torii config fbc set salvia --help`). Um `help` no fim só pede ajuda quando aquelas palavras formam um comando, porque também pode ser um valor, como um target chamado `help`. Um grupo sozinho (`torii config`, `torii config theme`, `torii target`) mostra o próprio help. Uma linha que o CLI não reconhece mostra o uso do comando mais próximo.
 
 | Comando | Efeito |
 |---|---|
 | `torii` | inicia o servidor MCP stdio |
 | `torii --version` ou `torii -V` | imprime a versão do binário |
 | `torii init` | cria raiz e settings, sem instalar providers |
-| `torii config-dir` | imprime o diretório de configuração |
+| `torii config list` | mostra cada preferência, o valor atual e o padrão |
+| `torii config dir show` | imprime o diretório de configuração |
+| `torii config theme list` | lista os temas e marca o padrão e o que está em uso |
+| `torii config theme set <tema>` | grava `dark` (padrão), `light` ou `nord` |
+| `torii config theme reset` | volta para `dark` |
+| `torii config theme test [<tema>]` | abre uma janela de autorização de exemplo no tema, sem gravar nada |
+| `torii config folded-bar-color list` | lista as cores da barra dobrada; atalho `fbc` |
+| `torii config folded-bar-color set <cor>` | grava um nome da lista, `theme` ou `#rrggbb` |
+| `torii config folded-bar-color reset` | volta para `rosa-antigo` |
+| `torii config folded-bar-color test [<cor>]` | abre a janela de exemplo com a cor na barra dobrada, sem gravar nada |
 | `torii self upgrade [--check]` | troca o próprio binário pela última release |
 | `torii provider list` | lista providers locais, versão e origem |
 | `torii provider search [query]` | pesquisa o catálogo configurado |
 | `torii provider install <source>` | instala nome, diretório, archive ou URL HTTPS |
-| `torii provider setup <provider> <setup>` | aplica setup read-only sobre rules vazio |
+| `torii provider setup <provider> <setup>` (ou `apply`) | aplica setup read-only sobre rules vazio |
 | `torii provider upgrade <provider>` | troca somente arquivos gerenciados pelo pacote |
 | `torii policy show <tool> [target]` | imprime a política ativa e avisa sobre accepts ignorados |
 | `torii policy edit <tool> [target] [--create] [--copy-shared]` | abre a política no editor, valida e só então substitui |
@@ -32,13 +43,13 @@ torii provider install --help
 | `torii target show <tool> <name>` | imprime `target.yaml` |
 | `torii target add <tool> <name> [--provider <tool>] [--scope <scope>] [--expect <identidade>]` | cria alias no modo `credentials`; sem `--provider`, o alias autentica pela própria tool |
 | `torii target activate <tool> <name> [--for <minutes>] [--add]` | concede lease temporário ao alias; por padrão substitui todos os aliases ativos da tool |
-| `torii target status <tool>` | mostra o estado dos leases e suas expirações |
+| `torii target status <tool>` (ou `check`) | mostra o estado dos leases e suas expirações |
 | `torii target clear <tool>` | revoga todos os leases da tool, sem alterar o estado operacional |
 | `torii target rename <tool> <name> <novo-nome>` | renomeia o alias mantendo binding, política, grants e `.env`; revoga o lease e fixa o balde de credencial no nome antigo |
 | `torii target remove <tool> <name> --force` | revoga o lease e remove o target e seu estado isolado |
 | `torii agent list` | lista adapters de agentes implementados |
 | `torii agent install <agent> [--hook] [--yes]` | registra o MCP no cliente e, quando ele oferecer hook, instala o guard |
-| `torii agent status <agent>` | mostra o estado MCP/hook e sua propriedade |
+| `torii agent status <agent>` (ou `check`) | mostra o estado MCP/hook e sua propriedade |
 | `torii agent uninstall <agent> [--hook]` | remove toda a integração ou somente o hook |
 
 Install recusa destino existente. Setup recusa rules não vazio. Upgrade requer lock de pacote e preserva rules, `.env`, grants, targets, cache e autenticação. Alterações no conjunto/configuração de providers exigem reiniciar o MCP.

@@ -27,6 +27,7 @@
 - [Configurar Azure](guides/azure.md)
 - [Configurar Snowflake](guides/snowflake.md)
 - [Operar e reautenticar](guides/control-plane.md)
+- [Personalizar as janelas](guides/appearance.md)
 - [Integrar agentes e instalar o hook](guides/agents.md)
 
 # Referência

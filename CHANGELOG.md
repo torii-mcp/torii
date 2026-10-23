@@ -34,6 +34,40 @@ Todas as mudanças relevantes deste projeto são registradas aqui. O formato seg
   é solto, e todos os botões da barra têm id estável. O egui atribui a pressão ao widget que
   ocupa a posição na hierarquia, então sem isso o clique que dobra a janela poderia ser herdado
   pela ação que aparece no lugar do botão.
+- `torii config`, o lugar das preferências do humano. Toda ação é um verbo: cada preferência
+  responde `list`, `set <valor>`, `reset` e `test [<valor>]`, e `torii config list` mostra todas
+  com o valor atual e o padrão. Cada janela lê as preferências quando abre, então trocar não exige
+  reiniciar o servidor MCP.
+- Temas para as janelas: `torii config theme set dark|light|nord`. `dark` continua sendo o
+  padrão. O tema escolhido vale mesmo que o sistema operacional esteja no modo oposto. Antes, num
+  sistema em modo claro, os widgets do egui ficavam claros enquanto os destaques do Torii
+  continuavam calibrados para fundo escuro.
+- A barra dobrada ganha cor própria, para a janela estacionada ser encontrada sobre qualquer
+  página: `torii config folded-bar-color set <cor>` (atalho `fbc`). Aceita um nome de uma lista
+  de tons suaves, `theme` para manter a barra do tema ou qualquer `#rrggbb`. O padrão é
+  `rosa-antigo`, e `grafite` traz de volta a barra escura de antes. Texto, botões e borda da barra
+  são derivados da cor, para continuar legíveis com qualquer valor.
+- `torii config theme test [<tema>]` e `torii config fbc test [<cor>]` abrem uma janela de
+  autorização de exemplo, para ver um tema ou uma cor antes ou depois de escolher. O pedido é uma
+  pizza de abacaxi para a sala de reunião, o motivo do agente diz que é teste de tema e nada roda
+  nem é gravado, qualquer que seja a resposta.
+- Todo comando aceita `help`, `--help` e `-h` antes ou depois das palavras: `torii help config
+  theme`, `torii config help theme`, `torii config theme help` e `torii config theme --help`
+  mostram o mesmo texto, e `--help` vale também depois de valores. Um grupo sozinho
+  (`torii config`, `torii config theme`, `torii target`) mostra o próprio help. Um teste percorre
+  todos os comandos e exige help para cada um, em todas as formas.
+
+- `check` como apelido de `status` (`torii target check`, `torii agent check`) e `apply` como
+  apelido de `setup` (`torii provider apply`), para quem prefere o verbo. Os nomes antigos
+  continuam valendo.
+
+### Alterado
+
+- `torii config-dir` virou `torii config dir show`.
+- Uma linha de comando que o CLI não reconhece mostra o uso do comando mais próximo, em vez do
+  help geral sob o prefixo `invalid MCP tool arguments`. `torii target activate kubectl` sem o
+  nome mostra a sintaxe de `target activate`.
+- Os textos de help saíram do `app.rs` para `src/help.rs`.
 
 ## [0.4.0] — 2026-09-04
 

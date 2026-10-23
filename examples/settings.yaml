@@ -1,3 +1,5 @@
 max_output_bytes: 262144
 default_grant_minutes: 2
 default_target_minutes: 15
+theme: dark
+folded_bar_color: rosa-antigo

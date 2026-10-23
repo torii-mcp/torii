@@ -2,7 +2,7 @@
 
 ## `no providers installed`
 
-O registry não encontrou `provider.yaml` sob `providers/`. Execute `torii provider list`, instale um pacote, confirme `TORII_CONFIG_DIR` e use `torii config-dir` para verificar a raiz efetiva. `torii init` sozinho não instala providers.
+O registry não encontrou `provider.yaml` sob `providers/`. Execute `torii provider list`, instale um pacote, confirme `TORII_CONFIG_DIR` e use `torii config dir show` para verificar a raiz efetiva. `torii init` sozinho não instala providers.
 
 ## `rules file not found`
 

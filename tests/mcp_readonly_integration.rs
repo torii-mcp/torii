@@ -32,7 +32,7 @@ environment:
     .unwrap();
     fs::write(
         provider.join("rules.yaml"),
-        "version: \"1.0\"\ndeny:\n  - \"agent list\"\naccept:\n  - \"config-dir\"\n",
+        "version: \"1.0\"\ndeny:\n  - \"agent list\"\naccept:\n  - \"config dir show\"\n",
     )
     .unwrap();
 }
@@ -81,7 +81,7 @@ async fn mcp_executes_only_a_read_operation_and_denies_another_before_spawn() {
         .unwrap();
     let policy = structured(&policy);
     assert_eq!(policy["provider"], "torii_reader");
-    assert_eq!(policy["accept"], json!(["config-dir"]));
+    assert_eq!(policy["accept"], json!(["config dir show"]));
     assert_eq!(policy["deny"], json!(["agent list"]));
     assert!(policy["unmatched"]
         .as_str()
@@ -91,7 +91,7 @@ async fn mcp_executes_only_a_read_operation_and_denies_another_before_spawn() {
     let allowed = client
         .call_tool(
             CallToolRequestParams::new("torii_reader").with_arguments(
-                json!({ "args": ["config-dir"] })
+                json!({ "args": ["config", "dir", "show"] })
                     .as_object()
                     .unwrap()
                     .clone(),

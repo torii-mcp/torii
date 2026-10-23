@@ -4,9 +4,11 @@ O entrypoint `src/main.rs` delega a `app`, que separa prompt interno, control pl
 
 ```text
 src/
-├── app.rs                  startup e CLI de controle
+├── app.rs                  startup e roteamento da CLI de controle
+├── help.rs                 textos de help e as formas de pedir ajuda
 ├── targets.rs              control plane de targets
 ├── policy.rs               edição humana validada das políticas
+├── config_cli.rs           `torii config`: preferências do humano
 ├── self_upgrade.rs         troca verificada do próprio binário
 ├── agents/codex.rs         integração Codex e guard compartilhado de shell
 ├── agents/portable.rs      adapters JSON: Claude, Gemini, Cursor, Antigravity, opencode, Copilot e pi
@@ -21,7 +23,10 @@ src/
 │   └── auth/session.rs     lifecycle de sessão
 ├── runtime/exec.rs         processos filhos
 ├── control/gui.rs          janelas em subprocesso
-├── config/                 paths, settings e env
+├── control/chrome.rs       barra de título própria e janela dobrada
+├── control/preview.rs      janela de exemplo do `torii config … test`
+├── control/theme/          paletas dark, light e nord, e a cor da barra dobrada
+├── config/                 paths, settings, env e aparência
 ├── audit.rs                log sanitizado
 └── error.rs                erros públicos seguros
 ```
@@ -32,7 +37,7 @@ src/
 
 ## GUI em subprocesso
 
-O servidor usa stdout para MCP, então prompts são abertos por uma nova execução do próprio binário com o subcomando interno `__prompt`. Pedido e resposta usam JSON pelos pipes privados. Durante autenticação, uma thread de background do subprocesso da GUI executa o validator sem bloquear o repaint; somente uma candidata validada retorna ao processo pai para persistência. Stderr do prompt é suprimido.
+O servidor usa stdout para MCP, então prompts são abertos por uma nova execução do próprio binário com o subcomando interno `__prompt`. Pedido e resposta usam JSON pelos pipes privados. Durante autenticação, uma thread de background do subprocesso da GUI executa o validator sem bloquear o repaint; somente uma candidata validada retorna ao processo pai para persistência. Stderr do prompt é suprimido. O subprocesso lê o tema e a cor da barra dobrada do `settings.yaml` ao abrir e fixa a paleta para a vida da janela; por isso trocar a aparência não exige reiniciar o servidor.
 
 ## Estado compartilhado
 
