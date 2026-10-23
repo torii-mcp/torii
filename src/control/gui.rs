@@ -2155,7 +2155,7 @@ struct AuthApp {
     validation: AuthValidation,
     form_height: f32,
     outcome: Rc<RefCell<Option<HashMap<String, String>>>>,
-    invalid_attempts: Rc<RefCell<u32>>,
+    rejections: Rc<RefCell<Vec<String>>>,
 }
 
 enum AuthValidationOutcome {
@@ -2467,8 +2467,8 @@ impl AuthApp {
             }
             Ok((AuthValidationOutcome::Rejected(reason), _)) => {
                 self.pending = None;
-                *self.invalid_attempts.borrow_mut() += 1;
                 self.error = Some(format!("Sessão recusada: {reason}"));
+                self.rejections.borrow_mut().push(reason);
             }
             Ok((AuthValidationOutcome::Failed, _)) => {
                 self.pending = None;
@@ -2515,8 +2515,8 @@ fn auth_window(
     let form_height = auth_form_height(&fields);
     let outcome = Rc::new(RefCell::new(None));
     let result = Rc::clone(&outcome);
-    let invalid_attempts = Rc::new(RefCell::new(0));
-    let app_invalid_attempts = Rc::clone(&invalid_attempts);
+    let rejections = Rc::new(RefCell::new(Vec::new()));
+    let app_rejections = Rc::clone(&rejections);
     let _ = eframe::run_native(
         "Torii — autenticação",
         native_options(AUTH_WINDOW_WIDTH, height),
@@ -2534,16 +2534,13 @@ fn auth_window(
                 validation,
                 form_height,
                 outcome: result,
-                invalid_attempts: app_invalid_attempts,
+                rejections: app_rejections,
             }))
         }),
     );
     let fields = outcome.borrow().clone();
-    let invalid_attempts = *invalid_attempts.borrow();
-    AuthPromptResult {
-        fields,
-        invalid_attempts,
-    }
+    let rejections = rejections.take();
+    AuthPromptResult { fields, rejections }
 }
 
 #[cfg(test)]

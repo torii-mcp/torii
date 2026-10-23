@@ -169,10 +169,12 @@ async fn ensure_environment(
         validation,
     )
     .await?;
-    for _ in 0..prompt.invalid_attempts {
+    // The audit is encrypted whole, so the validator's reason belongs there:
+    // it is what tells a wrong key from a probe that never reached the provider.
+    for reason in &prompt.rejections {
         scope
             .trail
-            .event(scope.audit, "session-candidate-invalid", "");
+            .event(scope.audit, "session-candidate-invalid", reason);
     }
     let Some(fields) = prompt.fields else {
         return Err(Error::AuthCancelled(scope.audit.into()));
@@ -228,7 +230,7 @@ pub async fn verify_identity(
     let observed = match probe_identity(output, &probe.field) {
         Ok(observed) => observed,
         Err(reason) => {
-            trail.event(audit_scope, "identity-check-failed", "");
+            trail.event(audit_scope, "identity-check-failed", &reason);
             return Err(Error::IdentityCheckFailed {
                 target: target.into(),
                 reason,

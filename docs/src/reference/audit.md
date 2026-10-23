@@ -119,7 +119,9 @@ O antigo `torii.log` em texto não é mais escrito. Um arquivo que já exista na
 | `legacy-grants-ignored` / `invalid-grants-ignored` | arquivo de grants antigo ou corrompido; pede reaprovação |
 | `target-access-requested` / `-denied` / `-replaced` / `-added` / `-stale` / `-lost` / `-revoked` / `-cleared` | o ciclo do lease de target |
 | `preflight-provider` / `preflight-ok` / `preflight-failed` | autenticação pelo provider de identidade |
-| `session-ok` / `session-unchecked` / `session-invalid` / `session-refreshed` / `session-candidate-invalid` / `reauth-forced` | estado da sessão do escopo de credencial |
-| `identity-ok` / `identity-mismatch` / `identity-check-failed` | conferência da identidade esperada |
+| `session-ok` / `session-unchecked` / `session-invalid` / `session-refreshed` / `reauth-forced` | estado da sessão do escopo de credencial |
+| `session-candidate-invalid` | uma tentativa recusada na janela de autenticação, uma por tentativa, com o motivo dado pelo validador (por exemplo, `ExpiredToken` ou falha de certificado) |
+| `identity-ok` / `identity-mismatch` | conferência da identidade esperada |
+| `identity-check-failed` | o probe não disse de quem é a sessão, com o motivo: código de saída e última linha do stderr, saída truncada ou campo ausente |
 | `ran` | o processo terminou, com o exit code |
 | `policy-created` / `policy-edited` | comando humano: política criada ou editada, com as regras que mudaram |

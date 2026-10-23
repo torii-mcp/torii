@@ -206,7 +206,7 @@ auth:
 
 Cada template deve ser exatamente `${NOME}` e referenciar um field declarado. `validate` é opcional, mas recomendado para credenciais coletadas.
 
-A janela roda `validate` com o mesmo ambiente que o servidor usa, inclusive sem as variáveis listadas em `removed_env`. Quando o validador recusa a candidata, a janela mostra a última linha que ele escreveu no stderr (ou o código de saída, se não escreveu nada). Esse texto aparece só na janela: não vai para a auditoria nem para nenhum log.
+A janela roda `validate` com o mesmo ambiente que o servidor usa, inclusive sem as variáveis listadas em `removed_env`. Quando o validador recusa a candidata, a janela mostra a última linha que ele escreveu no stderr (ou o código de saída, se não escreveu nada), e esse mesmo motivo vai, cifrado, para o detalhe do evento `session-candidate-invalid` na [auditoria](audit.md).
 
 ## Autenticação `inherited`
 
@@ -241,7 +241,7 @@ auth:
     - AWS_PROFILE
 ```
 
-- `auth.identity` é o probe que responde "de quem é esta sessão?". Roda sob o comando do próprio provider (não sob o comando alvo), força saída JSON e lê o campo `field`. Um target com `identity.expect` compara o resultado antes de executar; o resultado é cacheado por escopo em `.identity-cache`. Sem esse probe, `expect` é recusado na configuração. Quando o probe falha, o erro devolvido nomeia o target e diz o motivo: o código de saída com a última linha do stderr, saída truncada ou campo ausente. Assim, uma sessão recusada pelo provedor não se confunde com um probe que nem chegou até ele.
+- `auth.identity` é o probe que responde "de quem é esta sessão?". Roda sob o comando do próprio provider (não sob o comando alvo), força saída JSON e lê o campo `field`. Um target com `identity.expect` compara o resultado antes de executar; o resultado é cacheado por escopo em `.identity-cache`. Sem esse probe, `expect` é recusado na configuração. Quando o probe falha, o erro devolvido nomeia o target e diz o motivo: o código de saída com a última linha do stderr, saída truncada ou campo ausente. O motivo também fica no detalhe do evento `identity-check-failed`. Assim, uma sessão recusada pelo provedor não se confunde com um probe que nem chegou até ele.
 - `auth.profile_env` é a variável que carrega o `identity.profile` do target — por exemplo `AWS_PROFILE`, para que o plugin de credencial exec do kubectl herde o profile.
 - `auth.removed_env` lista variáveis de ambiente que nunca podem vazar do processo servidor para uma invocação autenticada por este provider; as credenciais/profile injetados vencem qualquer valor ambiente.
 

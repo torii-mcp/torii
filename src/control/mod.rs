@@ -127,7 +127,8 @@ pub enum TargetAccessChoice {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AuthPromptResult {
     pub fields: Option<HashMap<String, String>>,
-    pub invalid_attempts: u32,
+    /// Why each refused candidate was refused, in order: one entry per attempt.
+    pub rejections: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -195,7 +196,7 @@ pub async fn ask_auth(
     if gui_disabled() {
         return Ok(AuthPromptResult {
             fields: None,
-            invalid_attempts: 0,
+            rejections: Vec::new(),
         });
     }
     gui::ask_auth(provider, target, fields, error, validation).await
