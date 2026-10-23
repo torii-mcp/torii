@@ -37,10 +37,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes libx11-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libwayland-dev
 
+      # A versão vem do rust-toolchain.toml; o target, da matriz.
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
+        run: |
+          rustup toolchain install
+          rustup target add ${{ matrix.target }}
 
       - name: Build release binary
         run: cargo build --locked --release --target ${{ matrix.target }}

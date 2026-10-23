@@ -10,6 +10,8 @@ cargo clippy --all-targets -- -D warnings
 mdbook build docs
 ```
 
+O CI roda as mesmas verificações com a versão do Rust fixada em `rust-toolchain.toml`. Com `rustup`, a máquina local usa a mesma, e um lint novo aparece aqui antes de aparecer no CI. Atualizar a versão é um commit próprio, avaliado a cada sessão de trabalho.
+
 ## Testes existentes
 
 Testes unitários cobrem parsing de ambiente, matching, grants, pacotes em diretório/archive, setup, upgrade preservando estado e truncamento UTF-8. `tests/security_flow.rs` prova que deny explícito e default deny headless encerram antes de ambiente, autenticação ou executável. `tests/mcp_readonly_integration.rs` negocia MCP com um processo Torii real, executa uma operação local de leitura permitida e confirma que outra leitura explicitamente negada não inicia o provider.

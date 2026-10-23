@@ -23,6 +23,9 @@ cargo run -- provider install ./examples/providers/aws
 
 Nunca desenvolva contra `~/.config/torii`: isole a raiz com `TORII_CONFIG_DIR`.
 
+A versão do Rust é fixada em `rust-toolchain.toml`; com `rustup`, ela é instalada sozinha no
+primeiro `cargo` dentro do repositório. Atualizá-la é um commit próprio (veja `AGENTS.md`).
+
 No Windows com toolchain GNU, `eframe` exige uma instalação MinGW-w64 completa
 (`dlltool.exe` e `as.exe`) no `PATH`. Em CI ou headless, use `TORII_NO_GUI=1`.
 

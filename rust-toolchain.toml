@@ -1,0 +1,7 @@
+# A versão do Rust fica fixada aqui para o CI e as máquinas usarem a mesma: um lint novo do
+# stable não quebra o CI sem aparecer localmente. Atualizar é um commit deliberado, avaliado a
+# cada sessão de trabalho; veja "Toolchain" no AGENTS.md.
+[toolchain]
+channel = "1.99.0"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

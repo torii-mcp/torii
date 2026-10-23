@@ -38,10 +38,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes libx11-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libwayland-dev
 
+      # A versão e os componentes vêm do rust-toolchain.toml.
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
+        run: rustup toolchain install
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2

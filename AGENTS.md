@@ -85,6 +85,17 @@ No Windows com toolchain GNU, testes que linkam `eframe` precisam de MinGW-w64 c
 
 Em CI/headless, defina `TORII_NO_GUI=1`. Isso deve negar chamadas não resolvidas e cancelar coleta de autenticação com segurança.
 
+## Toolchain
+
+A versão do Rust é fixada em `rust-toolchain.toml` e vale igual para o CI e para as máquinas com `rustup`. Fixar evita que um lint novo do stable quebre o CI sem aparecer localmente, mas a versão não pode ficar parada.
+
+**No início de toda sessão de trabalho neste repositório, avalie atualizar o toolchain:**
+
+1. compare o `channel` do `rust-toolchain.toml` com o stable atual (`rustup check` ou <https://releases.rs>);
+2. se houver versão nova, troque o `channel`, rode a verificação obrigatória com ela e corrija os lints novos;
+3. faça um commit só com essa troca, separado do resto do trabalho;
+4. se decidir não atualizar, diga ao humano o motivo.
+
 ## Critério de conclusão
 
 Uma mudança está pronta quando o comportamento pedido está implementado, os invariantes continuam cobertos por testes, a documentação pública corresponde ao código e todas as verificações relevantes passam. Não declare suporte a uma estratégia ou provider apenas porque o schema aceita seu nome.
