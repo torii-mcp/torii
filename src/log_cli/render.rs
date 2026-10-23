@@ -15,19 +15,20 @@ const CALL_CHARS: usize = 90;
 /// The column names above `line`, laid out with the same widths.
 pub(super) fn header(ids: &Ids) -> String {
     let text = format!(
-        "{:<19}  {:>id$}  {:<20} {:<7}  {:<26} {:<16} CALL",
+        "{:<19}  {:>id$}  {:<20}  {:<7}  {:<26} {:<4}  {:<8}  CALL",
         "TIME",
         "ID",
         "SCOPE",
         "VERDICT",
         "HOW",
-        "RESULT",
+        "EXIT",
+        "DURATION",
         id = ids.width(),
     );
     style::bold(&text, ids.bold())
 }
 
-/// `2026-10-23 14:32:07     #128  aws/prd       ALLOW    temporary grant     exit 0   1.2s  s3api list-objects-v2 …`
+/// `2026-10-23 14:32:07     #128  aws/prd       ALLOW    temporary grant     0     1.2s      s3api list-objects-v2 …`
 pub(super) fn line(entry: &Entry, ids: &Ids) -> String {
     let record = &entry.record;
     let (verdict, how, what) = match record.kind {
@@ -42,19 +43,24 @@ pub(super) fn line(entry: &Entry, ids: &Ids) -> String {
             record.rule.clone().unwrap_or_default(),
         ),
     };
-    let result = match (record.exit_code, record.duration_ms()) {
-        (Some(code), Some(ms)) => format!("exit {code:<3} {}", duration(ms)),
-        (None, Some(ms)) if record.kind == Kind::Call => format!("{:<8} {}", "", duration(ms)),
+    // A call that never ran has no exit code; a human command has no duration.
+    let exit = record
+        .exit_code
+        .map(|code| code.to_string())
+        .unwrap_or_default();
+    let took = match record.duration_ms() {
+        Some(ms) if record.kind == Kind::Call => duration(ms),
         _ => String::new(),
     };
     format!(
-        "{}  {}  {:<20} {:<7}  {:<26} {:<16} {what}",
+        "{}  {}  {:<20}  {:<7}  {:<26} {:<4}  {:<8}  {what}",
         time(record.started_at),
         ids.render(entry.id),
         shorten(&record.scope, 20),
         verdict,
         shorten(&how, 26),
-        result,
+        exit,
+        took,
     )
     .trim_end()
     .to_owned()
@@ -402,7 +408,6 @@ mod tests {
             "aws/prd",
             "ALLOW",
             "temporary grant",
-            "exit 0",
             "1.2s",
             "s3api list-objects-v2",
         ] {
@@ -454,7 +459,7 @@ mod tests {
             ("SCOPE", "aws/prd"),
             ("VERDICT", "ALLOW"),
             ("HOW", "temporary grant"),
-            ("RESULT", "exit 0"),
+            ("DURATION", "1.2s"),
             ("CALL", "s3api"),
         ] {
             assert_eq!(
@@ -463,6 +468,12 @@ mod tests {
                 "{name} over {value}:\n{header}\n{line}"
             );
         }
+        let exit = header.find("EXIT").unwrap();
+        assert_eq!(
+            &line[exit..exit + 2],
+            "0 ",
+            "exit code under EXIT:\n{header}\n{line}"
+        );
         assert_eq!(
             header.find("ID").map(|at| at + 2),
             line.find("#128").map(|at| at + 4)

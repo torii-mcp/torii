@@ -68,9 +68,9 @@ torii log prune 30                 # mantém só os últimos 30 dias
 Uma linha do `tail`:
 
 ```text
-TIME                       ID  SCOPE        VERDICT  HOW              RESULT          CALL
-2026-10-23 14:32:07      #128  aws/prd      ALLOW    temporary grant  exit 0   1.2s   s3api list-objects-v2 --bucket logs
-2026-10-23 14:32:31      #129  kubectl/dev  DENY     deny rule                 3ms    delete pod api-7f9c
+TIME                       ID  SCOPE         VERDICT  HOW              EXIT  DURATION  CALL
+2026-10-23 14:32:07      #128  aws/prd       ALLOW    temporary grant  0     1.2s      s3api list-objects-v2 --bucket logs
+2026-10-23 14:32:31      #129  kubectl/dev   DENY     deny rule              3ms       delete pod api-7f9c
 ```
 
 Com `--follow`, uma chamada aparece quando chega e de novo quando termina. Assim, uma chamada esperando a sua resposta numa janela aparece enquanto espera.
