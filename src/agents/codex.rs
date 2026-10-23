@@ -60,15 +60,20 @@ pub fn install(paths: &ConfigPaths, with_hook: bool) -> Result<()> {
 
 pub fn print_status(paths: &ConfigPaths) -> Result<()> {
     let status = status_at(paths, None)?;
-    println!("codex_home\t{}", status.codex_home.display());
-    println!(
-        "mcp\t{}",
-        status_label(status.mcp_installed, status.mcp_managed)
-    );
-    println!(
-        "hook\t{}",
-        status_label(status.hook_installed, status.hook_managed)
-    );
+    let mut table = crate::console::Table::new(&["ITEM", "STATE"]);
+    table.row([
+        "codex_home".to_string(),
+        status.codex_home.display().to_string(),
+    ]);
+    table.row([
+        "mcp".to_string(),
+        status_label(status.mcp_installed, status.mcp_managed).to_string(),
+    ]);
+    table.row([
+        "hook".to_string(),
+        status_label(status.hook_installed, status.hook_managed).to_string(),
+    ]);
+    table.print();
     Ok(())
 }
 

@@ -196,19 +196,30 @@ async fn torii_log_finds_shows_and_exports_the_calls() {
     call(&client, &["agent", "list"], "tentar listar agentes").await;
     client.cancel().await.unwrap();
 
+    // A listing is a header line, then one line per record.
+    let records = |listing: &str| {
+        let mut lines = listing.lines();
+        let header = lines.next().unwrap_or_default();
+        assert!(
+            header.starts_with("TIME") && header.contains("VERDICT"),
+            "{listing}"
+        );
+        lines.count()
+    };
+
     let tail = torii_cli(&config, &["log", "tail"]);
-    assert_eq!(tail.lines().count(), 2, "{tail}");
+    assert_eq!(records(&tail), 2, "{tail}");
     assert!(tail.contains("ALLOW") && tail.contains("DENY"), "{tail}");
 
     let denied = torii_cli(&config, &["log", "search", "--denied"]);
-    assert_eq!(denied.lines().count(), 1, "{denied}");
+    assert_eq!(records(&denied), 1, "{denied}");
     assert!(
         denied.contains("agent list") && denied.contains("deny rule"),
         "{denied}"
     );
 
     let by_text = torii_cli(&config, &["log", "search", "--text", "RELATÓRIO"]);
-    assert_eq!(by_text.lines().count(), 1, "{by_text}");
+    assert_eq!(records(&by_text), 1, "{by_text}");
     let id = by_text
         .split('#')
         .nth(1)

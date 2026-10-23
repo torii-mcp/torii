@@ -8,9 +8,8 @@
 //! for every line. The full number always works too, and is what exports and
 //! tickets carry.
 
-use std::io::IsTerminal;
-
 use crate::audit::Ledger;
+use crate::console::style;
 use crate::error::{Error, Result};
 
 /// Seven digits hold ten million records; past that the column just widens.
@@ -18,9 +17,6 @@ const MIN_WIDTH: usize = 7;
 
 /// How many candidates `show` lists when a suffix names several records.
 const MAX_CANDIDATES: usize = 10;
-
-const BOLD: &str = "\x1b[1m";
-const NOT_BOLD: &str = "\x1b[22m";
 
 pub(super) struct Ids {
     lowest: i64,
@@ -49,15 +45,24 @@ impl Ids {
     /// `     #16` or `#1015312`, with the typable suffix in bold.
     pub(super) fn render(&self, id: i64) -> String {
         let digits = id.to_string();
-        let width = MIN_WIDTH.max(digit_count(self.highest));
-        let pad = " ".repeat(width.saturating_sub(digits.len()));
+        let pad = " ".repeat(self.digits().saturating_sub(digits.len()));
         let split = digits.len().saturating_sub(self.suffix());
         let (head, tail) = digits.split_at(split);
-        if self.bold {
-            format!("{pad}#{head}{BOLD}{tail}{NOT_BOLD}")
-        } else {
-            format!("{pad}#{head}{tail}")
-        }
+        format!("{pad}#{head}{}", style::bold(tail, self.bold))
+    }
+
+    /// How many characters a rendered number takes on screen, `#` included.
+    pub(super) fn width(&self) -> usize {
+        self.digits() + 1
+    }
+
+    /// Whether this listing goes to a terminal that shows bold.
+    pub(super) fn bold(&self) -> bool {
+        self.bold
+    }
+
+    fn digits(&self) -> usize {
+        MIN_WIDTH.max(digit_count(self.highest))
     }
 
     /// How many trailing digits tell every kept record apart.
@@ -108,41 +113,6 @@ pub(super) fn resolve(ledger: &Ledger, typed: &str) -> Result<i64> {
     }
 }
 
-/// Bold only reaches a terminal that understands it: never a pipe or a file,
-/// never with `NO_COLOR` or `TERM=dumb`.
-pub(super) fn bold_on_stdout() -> bool {
-    if std::env::var_os("NO_COLOR").is_some_and(|value| !value.is_empty()) {
-        return false;
-    }
-    if std::env::var_os("TERM").is_some_and(|value| value == "dumb") {
-        return false;
-    }
-    std::io::stdout().is_terminal() && console_takes_escapes()
-}
-
-/// The Windows console shows escape sequences as text unless asked not to.
-#[cfg(windows)]
-fn console_takes_escapes() -> bool {
-    use windows_sys::Win32::System::Console::{
-        GetConsoleMode, GetStdHandle, SetConsoleMode, ENABLE_VIRTUAL_TERMINAL_PROCESSING,
-        STD_OUTPUT_HANDLE,
-    };
-    // SAFETY: plain Win32 calls on this process's own stdout handle; `mode`
-    // outlives the call that writes it.
-    unsafe {
-        let handle = GetStdHandle(STD_OUTPUT_HANDLE);
-        let mut mode = 0;
-        GetConsoleMode(handle, &mut mode) != 0
-            && (mode & ENABLE_VIRTUAL_TERMINAL_PROCESSING != 0
-                || SetConsoleMode(handle, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING) != 0)
-    }
-}
-
-#[cfg(not(windows))]
-fn console_takes_escapes() -> bool {
-    true
-}
-
 fn digit_count(value: i64) -> usize {
     value.max(1).to_string().len()
 }
@@ -169,10 +139,19 @@ mod tests {
     #[test]
     fn the_bold_suffix_is_what_tells_kept_records_apart() {
         let ids = Ids::new(Some((1_000_500, 1_015_312)), true);
-        assert_eq!(ids.render(1_015_312), format!("#10{BOLD}15312{NOT_BOLD}"));
+        assert_eq!(
+            ids.render(1_015_312),
+            format!("#10{}", style::bold("15312", true))
+        );
         let young = Ids::new(Some((1, 16)), true);
-        assert_eq!(young.render(9), format!("      #{BOLD}9{NOT_BOLD}"));
-        assert_eq!(young.render(16), format!("     #{BOLD}16{NOT_BOLD}"));
+        assert_eq!(
+            young.render(9),
+            format!("      #{}", style::bold("9", true))
+        );
+        assert_eq!(
+            young.render(16),
+            format!("     #{}", style::bold("16", true))
+        );
     }
 
     #[test]

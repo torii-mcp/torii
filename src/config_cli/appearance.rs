@@ -1,21 +1,24 @@
 //! `torii config theme` and `torii config folded-bar-color`.
 
-use super::{row, update};
+use super::{mark, update};
 use crate::config::appearance::{hex, FoldedBarColor, Theme, NAMED_COLORS};
 use crate::config::{settings, ConfigPaths};
+use crate::console::Table;
 use crate::control::preview;
 use crate::error::{Error, Result};
 
 pub(super) fn list_themes(paths: &ConfigPaths) -> Result<()> {
     let current = settings::load(&paths.settings())?.theme;
+    let mut table = Table::new(&["", "THEME", "NOTE"]);
     for theme in Theme::ALL {
         let note = if theme == Theme::default() {
             "default"
         } else {
             ""
         };
-        println!("{}", row(theme == current, theme.name(), note, ""));
+        table.row([mark(theme == current), theme.name(), note]);
     }
+    table.print();
     println!("\n* in use");
     Ok(())
 }
@@ -44,7 +47,7 @@ pub(super) fn test_theme(paths: &ConfigPaths, value: Option<&str>) -> Result<()>
 pub(super) fn list_folded_bar_colors(paths: &ConfigPaths) -> Result<()> {
     let current = settings::load(&paths.settings())?.folded_bar_color;
     let default = FoldedBarColor::default();
-    println!("{}", row(false, "NAME", "COLOR", ""));
+    let mut table = Table::new(&["", "NAME", "COLOR", "NOTE"]);
     for color in NAMED_COLORS {
         let value = FoldedBarColor::Named(color);
         let note = match color.name {
@@ -52,23 +55,18 @@ pub(super) fn list_folded_bar_colors(paths: &ConfigPaths) -> Result<()> {
             "grafite" => "the dark bar of earlier versions",
             _ => "",
         };
-        println!(
-            "{}",
-            row(value == current, color.name, &hex(color.rgb), note)
-        );
+        table.row([mark(value == current), color.name, &hex(color.rgb), note]);
     }
-    println!(
-        "{}",
-        row(
-            current == FoldedBarColor::Theme,
-            "theme",
-            "-",
-            "the theme's own title bar"
-        )
-    );
+    table.row([
+        mark(current == FoldedBarColor::Theme),
+        "theme",
+        "-",
+        "the theme's own title bar",
+    ]);
     if let FoldedBarColor::Custom(rgb) = current {
-        println!("{}", row(true, "", &hex(rgb), "custom"));
+        table.row(["*", "custom", &hex(rgb), ""]);
     }
+    table.print();
     println!(
         "\n* in use. `set` also takes any #rrggbb; `torii config folded-bar-color reset` restores {default}."
     );

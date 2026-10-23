@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
 use crate::config::ConfigPaths;
+use crate::console::Table;
 use crate::error::{Error, Result};
 
 const STATE_VERSION: u32 = 1;
@@ -147,13 +148,22 @@ pub fn print_status(paths: &ConfigPaths, agent: &str) -> Result<()> {
         && state
             .as_ref()
             .is_some_and(|state| state.hook_owned && hook_entry == Some(&state.hook_entry));
-    println!("config_home\t{}", spec.config_home.display());
-    println!("mcp\t{}", status_label(mcp_entry.is_some(), mcp_managed));
-    if spec.hook.is_none() {
-        println!("hook\tnot managed by Torii for {}", spec.display_name);
+    let mut table = Table::new(&["ITEM", "STATE"]);
+    table.row([
+        "config_home".to_string(),
+        spec.config_home.display().to_string(),
+    ]);
+    table.row([
+        "mcp".to_string(),
+        status_label(mcp_entry.is_some(), mcp_managed).to_string(),
+    ]);
+    let hook = if spec.hook.is_none() {
+        format!("not managed by Torii for {}", spec.display_name)
     } else {
-        println!("hook\t{}", status_label(hook_entry.is_some(), hook_managed));
-    }
+        status_label(hook_entry.is_some(), hook_managed).to_string()
+    };
+    table.row(["hook".to_string(), hook]);
+    table.print();
     Ok(())
 }
 

@@ -29,6 +29,7 @@ src/
 ├── config/                 paths, settings, env e aparência
 ├── audit/                  auditoria: registro, banco SQLite3 Multiple Ciphers, busca e chave no cofre
 ├── log_cli/                `torii log`: tail, search, show, export e prune
+├── console/                tabelas com cabeçalho e negrito só em terminal, para todo o CLI
 └── error.rs                erros públicos seguros
 ```
 

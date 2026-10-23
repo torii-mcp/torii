@@ -13,6 +13,14 @@ torii config theme --help
 
 `--help` e `-h` valem também depois de valores (`torii config fbc set salvia --help`). Um `help` no fim só pede ajuda quando aquelas palavras formam um comando, porque também pode ser um valor, como um target chamado `help`. Um grupo sozinho (`torii config`, `torii config theme`, `torii target`) mostra o próprio help. Uma linha que o CLI não reconhece mostra o uso do comando mais próximo.
 
+Toda listagem sai como tabela: uma linha de cabeçalho com os nomes das colunas em caixa alta e as colunas alinhadas, separadas por dois espaços. Num terminal o cabeçalho vem em negrito; com `NO_COLOR`, `TERM=dumb` ou a saída indo para um pipe ou arquivo, ele vem sem formatação. Uma listagem vazia não imprime nada, nem o cabeçalho.
+
+```text
+TARGET       STATE     EXPIRES           REMAINING
+dev          active    2026-10-23 20:52  214min
+prd          inactive  -                 -
+```
+
 | Comando | Efeito |
 |---|---|
 | `torii` | inicia o servidor MCP stdio |

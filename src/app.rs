@@ -1,5 +1,6 @@
 use crate::audit;
 use crate::config::{env_file, settings, ConfigPaths};
+use crate::console::Table;
 use crate::core::Invoker;
 use crate::error::{Error, Result};
 use crate::policy::CreateMode;
@@ -65,16 +66,28 @@ async fn run_async(args: Vec<String>) -> Result<i32> {
             Ok(0)
         }
         [command, subcommand] if command == "agent" && subcommand == "list" => {
-            println!("codex\tMCP and optional PreToolUse hook");
-            println!("claude\tMCP and optional PreToolUse hook");
-            println!("gemini\tMCP and optional BeforeTool hook");
-            println!("cursor\tMCP and optional beforeShellExecution hook");
-            println!("antigravity\tMCP and optional PreToolUse hook on run_command");
-            println!("opencode\tMCP only; opencode has no pre-execution hook");
-            println!("copilot\tMCP only; GitHub Copilot in VS Code has no pre-execution hook");
-            println!("copilot-cli\tMCP only; GitHub Copilot CLI has no pre-execution hook");
-            println!("kiro\tMCP only; Torii does not manage Kiro workspace hooks");
-            println!("pi\tMCP only, and pi needs an MCP extension to read it");
+            let mut table = Table::new(&["AGENT", "SUPPORT"]);
+            for row in [
+                ["codex", "MCP and optional PreToolUse hook"],
+                ["claude", "MCP and optional PreToolUse hook"],
+                ["gemini", "MCP and optional BeforeTool hook"],
+                ["cursor", "MCP and optional beforeShellExecution hook"],
+                ["antigravity", "MCP and optional PreToolUse hook on run_command"],
+                ["opencode", "MCP only; opencode has no pre-execution hook"],
+                [
+                    "copilot",
+                    "MCP only; GitHub Copilot in VS Code has no pre-execution hook",
+                ],
+                [
+                    "copilot-cli",
+                    "MCP only; GitHub Copilot CLI has no pre-execution hook",
+                ],
+                ["kiro", "MCP only; Torii does not manage Kiro workspace hooks"],
+                ["pi", "MCP only, and pi needs an MCP extension to read it"],
+            ] {
+                table.row(row);
+            }
+            table.print();
             Ok(0)
         }
         [command, subcommand, agent]
@@ -168,33 +181,30 @@ async fn run_async(args: Vec<String>) -> Result<i32> {
         }
         [command, subcommand] if command == "provider" && subcommand == "list" => {
             let registry = ProviderRegistry::load(&paths)?;
+            let mut table = Table::new(&["TOOL", "NAME", "COMMAND", "VERSION", "SOURCE"]);
             for provider in registry.providers() {
                 let lock = packages::installed_lock(&provider.paths);
                 let version = lock
                     .as_ref()
                     .map_or("-", |lock| lock.package_version.as_str());
                 let source = lock.as_ref().map_or("local", |lock| lock.source.as_str());
-                println!(
-                    "{}\t{}\t{}\t{}\t{}",
-                    provider.config.tool,
-                    provider.config.name,
-                    provider.config.command,
+                table.row([
+                    provider.config.tool.as_str(),
+                    provider.config.name.as_str(),
+                    provider.config.command.as_str(),
                     version,
-                    source
-                );
+                    source,
+                ]);
             }
+            table.print();
             Ok(0)
         }
         [command, subcommand] if command == "provider" && subcommand == "search" => {
-            for entry in packages::search(None).await? {
-                println!("{}\t{}\t{}", entry.name, entry.version, entry.description);
-            }
+            print_catalog(packages::search(None).await?);
             Ok(0)
         }
         [command, subcommand, query] if command == "provider" && subcommand == "search" => {
-            for entry in packages::search(Some(query)).await? {
-                println!("{}\t{}\t{}", entry.name, entry.version, entry.description);
-            }
+            print_catalog(packages::search(Some(query)).await?);
             Ok(0)
         }
         [command, subcommand, source] if command == "provider" && subcommand == "install" => {
@@ -359,6 +369,14 @@ async fn run_async(args: Vec<String>) -> Result<i32> {
 
 fn version_text() -> String {
     format!("torii {}", env!("CARGO_PKG_VERSION"))
+}
+
+fn print_catalog(entries: Vec<packages::CatalogEntry>) {
+    let mut table = Table::new(&["NAME", "VERSION", "DESCRIPTION"]);
+    for entry in entries {
+        table.row([entry.name, entry.version, entry.description]);
+    }
+    table.print();
 }
 
 /// `check` is the verb form of `status`; both stay.

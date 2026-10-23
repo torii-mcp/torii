@@ -1,5 +1,6 @@
 use crate::audit;
 use crate::config::{env_file, ConfigPaths, TargetPaths};
+use crate::console::Table;
 use crate::error::{Error, Result};
 use crate::providers::registry::valid_name;
 use crate::providers::{Provider, ProviderRegistry, TargetConfig, TargetIdentity, TargetMode};
@@ -238,33 +239,39 @@ fn check_expect_probe(identity_provider: &Provider, options: &IdentityOptions) -
 pub fn list(paths: &ConfigPaths, tool: &str) -> Result<()> {
     let registry = ProviderRegistry::load(paths)?;
     let provider = targeted_provider(&registry, tool)?;
+    let mode = target_mode(&provider)?;
+    // The binding column depends on the mode; credentials have no external
+    // binding to show, so their table has no such column.
+    let header: &[&'static str] = match mode {
+        TargetMode::Credentials => &["TARGET", "EXPECTED IDENTITY", "SCOPE"],
+        TargetMode::KubectlContext | TargetMode::HelmKubeContext => {
+            &["TARGET", "CONTEXT", "IDENTITY PROVIDER", "SCOPE"]
+        }
+        TargetMode::AwsProfile => &["TARGET", "PROFILE", "EXPECTED IDENTITY", "SCOPE"],
+    };
+    let mut table = Table::new(header);
     for target in provider.targets.values() {
         let identity = &target.config.identity;
+        let name = target.config.name.as_str();
         let scope = target.config.credential_scope();
-        match target_mode(&provider)? {
-            // Não há binding externo para mostrar; a coluna dele fica vazia.
-            TargetMode::Credentials => println!(
-                "{}\t-\t{}\t{}",
-                target.config.name,
-                identity.expect.as_deref().unwrap_or("-"),
-                scope,
-            ),
-            TargetMode::KubectlContext | TargetMode::HelmKubeContext => println!(
-                "{}\t{}\t{}\t{}",
-                target.config.name,
+        let expect = identity.expect.as_deref().unwrap_or("-");
+        match mode {
+            TargetMode::Credentials => table.row([name, expect, scope]),
+            TargetMode::KubectlContext | TargetMode::HelmKubeContext => table.row([
+                name,
                 target.config.context.as_deref().expect("validated context"),
-                identity.provider,
+                identity.provider.as_str(),
                 scope,
-            ),
-            TargetMode::AwsProfile => println!(
-                "{}\t{}\t{}\t{}",
-                target.config.name,
+            ]),
+            TargetMode::AwsProfile => table.row([
+                name,
                 identity.profile.as_deref().expect("validated profile"),
-                identity.expect.as_deref().unwrap_or("-"),
+                expect,
                 scope,
-            ),
+            ]),
         }
     }
+    table.print();
     Ok(())
 }
 
@@ -333,6 +340,7 @@ pub fn status(paths: &ConfigPaths, tool: &str) -> Result<()> {
     let known = target_access::known_targets(&provider)?;
     let now = audit::now_epoch();
     let snapshot = target_access::load(&provider.paths.target_authorizations(), &known, now)?;
+    let mut table = Table::new(&["TARGET", "STATE", "EXPIRES", "REMAINING"]);
     for target in provider.target_names() {
         if let Some(active) = snapshot
             .active
@@ -340,16 +348,36 @@ pub fn status(paths: &ConfigPaths, tool: &str) -> Result<()> {
             .find(|authorization| authorization.target == target)
         {
             let remaining_minutes = active.expires_at.saturating_sub(now).div_ceil(60);
-            println!(
-                "{}\tactive\texpires_at={}\tremaining={}min",
-                target, active.expires_at, remaining_minutes
-            );
+            table.row([
+                target.to_string(),
+                "active".into(),
+                local_time(active.expires_at),
+                format!("{remaining_minutes}min"),
+            ]);
         } else {
-            println!("{target}\tinactive\t-\t-");
+            table.row([
+                target.to_string(),
+                "inactive".into(),
+                "-".into(),
+                "-".into(),
+            ]);
         }
     }
+    table.print();
     warn_if_multiple(&snapshot.active);
     Ok(())
+}
+
+/// An epoch in seconds as local date and time, to the minute.
+fn local_time(epoch: u64) -> String {
+    use chrono::{Local, TimeZone};
+    i64::try_from(epoch)
+        .ok()
+        .and_then(|seconds| Local.timestamp_opt(seconds, 0).single())
+        .map_or_else(
+            || epoch.to_string(),
+            |time| time.format("%Y-%m-%d %H:%M").to_string(),
+        )
 }
 
 pub fn warn_if_multiple(active: &[TargetAuthorization]) {

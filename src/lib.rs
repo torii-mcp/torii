@@ -3,6 +3,7 @@ pub mod app;
 pub mod audit;
 pub mod config;
 pub mod config_cli;
+pub mod console;
 pub mod control;
 pub mod core;
 pub mod error;

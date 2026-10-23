@@ -8,6 +8,14 @@ fn torii() -> Command {
     Command::new(env!("CARGO_BIN_EXE_torii"))
 }
 
+/// Whether a status table has a row for `item` whose state starts with `state`.
+fn has_row(table: &str, item: &str, state: &str) -> bool {
+    table.lines().any(|line| {
+        line.split_once(char::is_whitespace)
+            .is_some_and(|(first, rest)| first == item && rest.trim_start().starts_with(state))
+    })
+}
+
 fn write_provider(config: &TempDir) {
     let provider = config.path().join("providers").join("aws");
     std::fs::create_dir_all(&provider).unwrap();
@@ -245,8 +253,8 @@ fn codex_install_status_and_uninstall_work_in_an_isolated_home() {
         .unwrap();
     assert!(status.status.success());
     let status = String::from_utf8(status.stdout).unwrap();
-    assert!(status.contains("mcp\tinstalled (managed by Torii)"));
-    assert!(status.contains("hook\tinstalled (managed by Torii)"));
+    assert!(has_row(&status, "mcp", "installed (managed by Torii)"));
+    assert!(has_row(&status, "hook", "installed (managed by Torii)"));
 
     let uninstall = torii()
         .args(["agent", "uninstall", "codex"])
@@ -335,11 +343,11 @@ fn mcp_only_agents_install_in_their_native_shape_and_preserve_config() {
             .unwrap();
         let stdout = String::from_utf8_lossy(&status.stdout);
         assert!(
-            stdout.contains("mcp\tinstalled (managed by Torii)"),
+            has_row(&stdout, "mcp", "installed (managed by Torii)"),
             "{agent}: {stdout}"
         );
         assert!(
-            stdout.contains("hook\tnot managed by Torii"),
+            has_row(&stdout, "hook", "not managed by Torii"),
             "{agent}: {stdout}"
         );
 

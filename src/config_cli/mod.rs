@@ -15,6 +15,7 @@ mod appearance;
 mod logging;
 
 use crate::config::{settings, ConfigPaths, Settings};
+use crate::console::Table;
 use crate::error::{Error, Result};
 
 /// What a preference answers.
@@ -106,18 +107,21 @@ fn list(paths: &ConfigPaths) -> Result<()> {
             defaults.log_output.to_string(),
         ),
     ];
+    let mut table = Table::new(&["PREFERENCE", "VALUE", "DEFAULT"]);
     for (key, value, default) in rows {
-        println!("{key:<18} {value:<14} default: {default}");
+        table.row([key.to_string(), value, default]);
     }
+    table.print();
     Ok(())
 }
 
-/// One line of a choice list: the in-use mark, then aligned columns.
-fn row(in_use: bool, name: &str, value: &str, note: &str) -> String {
-    let mark = if in_use { '*' } else { ' ' };
-    format!("{mark} {name:<12} {value:<9} {note}")
-        .trim_end()
-        .to_owned()
+/// The first cell of a choice list: `*` on the one in use.
+fn mark(in_use: bool) -> &'static str {
+    if in_use {
+        "*"
+    } else {
+        ""
+    }
 }
 
 /// Load, change and save the settings, creating the file when it is missing.

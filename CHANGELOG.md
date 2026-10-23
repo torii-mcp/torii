@@ -25,6 +25,11 @@ Todas as mudanças relevantes deste projeto são registradas aqui. O formato seg
   7 dígitos, e os últimos dígitos que bastam para achá-lo aparecem em negrito (só num terminal,
   nunca com `NO_COLOR` ou saída redirecionada). `torii log show` aceita esses dígitos finais:
   `show 312` acha o registro que termina em 312, e lista os candidatos quando há mais de um.
+- Toda listagem do CLI tem cabeçalho: `log tail`/`search`, `target list`/`status`, `provider
+  list`/`search`, `agent list`/`status`, `config list` e as listas de cada preferência. Os nomes
+  das colunas vêm em caixa alta, em negrito num terminal, e as colunas são alinhadas por espaços
+  em vez de separadas por tab. `target status` mostra a expiração em data e hora local, não em
+  epoch.
 - Preferências `torii config log-retention` (90 dias), `log-tail` (20 registros) e `log-output`
   (`full`); todo servidor aplica a retenção quando inicia.
 

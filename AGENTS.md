@@ -54,6 +54,7 @@ O repositório irmão `../awsgate` é somente referência. Nunca edite, formate,
 - `src/audit/`: auditoria em SQLite3 Multiple Ciphers, cifrada por inteiro (registro, banco, busca e chave no cofre do sistema).
 - `src/log_cli/`: `torii log` (tail, search, show, export, prune).
 - `src/config_cli/`: `torii config` (aparência e preferências de log).
+- `src/console/`: o que o CLI imprime para gente ler; toda listagem usa `console::Table`, com cabeçalho.
 - `vendor/libsqlite3-sys/`: `libsqlite3-sys` compilando SQLite3 Multiple Ciphers; mudanças marcadas `Torii:` e procedimento de atualização em `vendor/README.md`.
 - `examples/`: fixtures de pacotes canônicos usadas em testes e no desenvolvimento do catálogo separado.
 - `docs/`: documentação oficial em mdBook.

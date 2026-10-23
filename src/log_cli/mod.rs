@@ -66,6 +66,9 @@ fn tail(paths: &ConfigPaths, args: &[String]) -> Result<()> {
     let mut ids = numbering(&ledger)?;
     let mut last = entries.last().map_or(0, |entry| entry.id);
     let mut running = BTreeSet::new();
+    if follow || !entries.is_empty() {
+        println!("{}", render::header(&ids));
+    }
     for entry in &entries {
         println!("{}", render::line(entry, &ids));
         if is_running(entry) {
@@ -123,6 +126,9 @@ fn search(paths: &ConfigPaths, args: &[String]) -> Result<()> {
     // The suffix comes from every kept record, not just the matches: it is
     // what `show` needs to tell this one from all the others.
     let ids = numbering(&ledger)?;
+    if !found.is_empty() {
+        println!("{}", render::header(&ids));
+    }
     for entry in &found {
         println!("{}", render::line(entry, &ids));
     }
@@ -284,7 +290,7 @@ fn parse_count(value: Option<&String>) -> Result<usize> {
 fn numbering(ledger: &Ledger) -> Result<ids::Ids> {
     Ok(ids::Ids::new(
         ledger.id_range().map_err(audit_error)?,
-        ids::bold_on_stdout(),
+        crate::console::style::bold_on_stdout(),
     ))
 }
 

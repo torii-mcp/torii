@@ -2,9 +2,10 @@
 
 use std::ops::RangeInclusive;
 
-use super::{row, update};
+use super::{mark, update};
 use crate::config::logging::{self, LogOutput};
 use crate::config::{settings, ConfigPaths};
+use crate::console::Table;
 use crate::error::{Error, Result};
 
 pub(super) fn days(count: u32) -> String {
@@ -89,18 +90,20 @@ pub(super) fn reset_tail(paths: &ConfigPaths) -> Result<()> {
 
 pub(super) fn list_output(paths: &ConfigPaths) -> Result<()> {
     let current = settings::load(&paths.settings())?.log_output;
+    let mut table = Table::new(&["", "VALUE", "DEFAULT", "NOTE"]);
     for choice in LogOutput::ALL {
         let note = match choice {
             LogOutput::Full => "keep stdout and stderr, compressed and sealed",
             LogOutput::None => "keep only sizes and exit code",
         };
         let default = if choice == LogOutput::default() {
-            "default"
+            "yes"
         } else {
             ""
         };
-        println!("{}", row(choice == current, choice.name(), default, note));
+        table.row([mark(choice == current), choice.name(), default, note]);
     }
+    table.print();
     println!("\n* in use");
     Ok(())
 }
@@ -124,10 +127,12 @@ fn save_output(paths: &ConfigPaths, choice: LogOutput) -> Result<()> {
 
 /// A numeric preference: its value, its default and the values it accepts.
 fn list_count(current: u32, default: u32, range: &RangeInclusive<u32>, unit: fn(u32) -> String) {
-    println!("{}", row(true, &unit(current), "", "in use"));
+    let mut table = Table::new(&["VALUE", "NOTE"]);
+    table.row([unit(current), "in use".into()]);
     if current != default {
-        println!("{}", row(false, &unit(default), "", "default"));
+        table.row([unit(default), "default".into()]);
     }
+    table.print();
     println!("\nAccepts {} to {}.", range.start(), range.end());
 }
 

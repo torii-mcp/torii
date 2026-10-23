@@ -7,11 +7,27 @@ use serde::Serialize;
 use super::ids::Ids;
 use crate::audit::record::{CallRecord, EventRecord, Kind, Outcome, Output};
 use crate::audit::Entry;
+use crate::console::style;
 
 /// How much of the call a summary line shows.
 const CALL_CHARS: usize = 90;
 
-/// `2026-10-23 14:32:07     #128  aws/prd       ALLOW  temporary grant     exit 0   1.2s  s3api list-objects-v2 …`
+/// The column names above `line`, laid out with the same widths.
+pub(super) fn header(ids: &Ids) -> String {
+    let text = format!(
+        "{:<19}  {:>id$}  {:<20} {:<7}  {:<26} {:<16} CALL",
+        "TIME",
+        "ID",
+        "SCOPE",
+        "VERDICT",
+        "HOW",
+        "RESULT",
+        id = ids.width(),
+    );
+    style::bold(&text, ids.bold())
+}
+
+/// `2026-10-23 14:32:07     #128  aws/prd       ALLOW    temporary grant     exit 0   1.2s  s3api list-objects-v2 …`
 pub(super) fn line(entry: &Entry, ids: &Ids) -> String {
     let record = &entry.record;
     let (verdict, how, what) = match record.kind {
@@ -32,7 +48,7 @@ pub(super) fn line(entry: &Entry, ids: &Ids) -> String {
         _ => String::new(),
     };
     format!(
-        "{}  {}  {:<20} {:<5}  {:<26} {:<16} {what}",
+        "{}  {}  {:<20} {:<7}  {:<26} {:<16} {what}",
         time(record.started_at),
         ids.render(entry.id),
         shorten(&record.scope, 20),
@@ -420,6 +436,37 @@ mod tests {
         );
         assert!(text.contains("torii log show 7 --output"));
         assert!(text.contains("2.0 KiB"));
+    }
+
+    /// Every column name sits where its values start.
+    #[test]
+    fn the_header_lines_up_with_the_values() {
+        let ids = Ids::new(Some((1, 128)), false);
+        let header = header(&ids);
+        let line = line(
+            &Entry {
+                id: 128,
+                record: record(),
+            },
+            &ids,
+        );
+        for (name, value) in [
+            ("SCOPE", "aws/prd"),
+            ("VERDICT", "ALLOW"),
+            ("HOW", "temporary grant"),
+            ("RESULT", "exit 0"),
+            ("CALL", "s3api"),
+        ] {
+            assert_eq!(
+                header.find(name),
+                line.find(value),
+                "{name} over {value}:\n{header}\n{line}"
+            );
+        }
+        assert_eq!(
+            header.find("ID").map(|at| at + 2),
+            line.find("#128").map(|at| at + 4)
+        );
     }
 
     #[test]
