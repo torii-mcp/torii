@@ -246,6 +246,35 @@ impl Ledger {
         rows.map(|row| row.map_err(sql)).collect()
     }
 
+    /// The lowest and highest record numbers kept, if there is any record.
+    pub fn id_range(&self) -> Result<Option<(i64, i64)>, String> {
+        self.connection
+            .query_row("SELECT MIN(id), MAX(id) FROM calls", [], |row| {
+                Ok(row
+                    .get::<_, Option<i64>>(0)?
+                    .zip(row.get::<_, Option<i64>>(1)?))
+            })
+            .map_err(sql)
+    }
+
+    /// Record numbers whose decimal digits end with `digits`, newest first,
+    /// at most `limit` of them: what `torii log show 312` may mean.
+    pub fn ending_with(&self, digits: &str, limit: usize) -> Result<Vec<i64>, String> {
+        debug_assert!(digits.bytes().all(|b| b.is_ascii_digit()));
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT id FROM calls WHERE CAST(id AS TEXT) LIKE ?1 ORDER BY id DESC LIMIT ?2",
+            )
+            .map_err(sql)?;
+        let rows = statement
+            .query_map(params![format!("%{digits}"), limit as i64], |row| {
+                row.get(0)
+            })
+            .map_err(sql)?;
+        rows.map(|row| row.map_err(sql)).collect()
+    }
+
     /// The newest records the query keeps, newest first.
     pub fn search(&self, query: &Query) -> Result<Vec<Entry>, String> {
         let (clause, values) = query.sql();
@@ -713,6 +742,35 @@ mod tests {
         assert!(ledger.output(old).unwrap().is_none());
         assert_eq!(ledger.events(fresh).unwrap().len(), 1);
         assert!(ledger.output(fresh).unwrap().is_some());
+    }
+
+    /// A pruned number is never handed out again, so a `#16` written in a
+    /// ticket keeps meaning the same call.
+    #[test]
+    fn numbers_are_not_reused_after_a_prune_and_the_range_follows() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let ledger = ledger(&temp);
+        assert_eq!(ledger.id_range().unwrap(), None);
+        let first = ledger.insert_call(&record(100, &["get"])).unwrap();
+        let second = ledger.insert_call(&record(900, &["get"])).unwrap();
+        ledger.prune(500).unwrap();
+        let third = ledger.insert_call(&record(950, &["get"])).unwrap();
+        assert!(third > second && second > first);
+        assert_eq!(ledger.id_range().unwrap(), Some((second, third)));
+    }
+
+    #[test]
+    fn ending_with_matches_the_last_digits_newest_first() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let ledger = ledger(&temp);
+        let ids = (0..25)
+            .map(|index| ledger.insert_call(&record(index, &["get"])).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(ids[11], 12);
+        assert_eq!(ledger.ending_with("12", 10).unwrap(), [12]);
+        assert_eq!(ledger.ending_with("2", 10).unwrap(), [22, 12, 2]);
+        assert_eq!(ledger.ending_with("2", 2).unwrap(), [22, 12]);
+        assert!(ledger.ending_with("99", 10).unwrap().is_empty());
     }
 
     #[test]

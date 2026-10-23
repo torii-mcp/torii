@@ -31,6 +31,9 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 # Manager (DPAPI) on Windows, Keychain on macOS, Secret Service on Linux.
 [target.'cfg(windows)'.dependencies]
 keyring = { version = "3", features = ["windows-native"] }
+# Turns on escape sequences in the console, for the bold in `torii log`. The
+# crate is already in the tree through tokio; this only names the feature.
+windows-sys = { version = "0.61", features = ["Win32_System_Console"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 keyring = { version = "3", features = ["apple-native"] }

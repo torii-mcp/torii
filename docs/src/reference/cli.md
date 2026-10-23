@@ -25,7 +25,7 @@ torii config theme --help
 | `torii config log-output list\|set full\|none\|reset` | guardar ou não a saída das chamadas; padrão `full` |
 | `torii log tail [-n <n>] [--follow]` | últimos registros da auditoria; `--follow` acompanha ao vivo |
 | `torii log search [filtros] [-n <n>]` | registros que casam os filtros, os mais novos |
-| `torii log show <id> [--output]` | tudo sobre um registro, e a saída com `--output` |
+| `torii log show <id> [--output]` | tudo sobre um registro, e a saída com `--output`; `<id>` é o número ou os dígitos finais que o `tail` mostra em negrito |
 | `torii log export [filtros] [--format json\|md] [--file <caminho>] [--with-output]` | exporta em texto aberto |
 | `torii log prune [dias]` | mantém só os últimos `dias`, ou a retenção |
 | `torii config theme list` | lista os temas e marca o padrão e o que está em uso |

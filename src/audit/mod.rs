@@ -28,6 +28,12 @@ pub use transaction::{record, Call, Closing, Execution, Trail, Transaction};
 
 use crate::config::ConfigPaths;
 
+/// A ledger in `dir`, with a test key, for tests outside this module.
+#[cfg(test)]
+pub(crate) fn test_ledger(dir: &std::path::Path) -> Ledger {
+    ledger::open_for_test(&dir.join("audit.db"), &key::test_key(1))
+}
+
 /// Delete the records older than `days`. Returns how many went.
 pub fn prune(paths: &ConfigPaths, days: u32) -> Result<usize, String> {
     let cutoff = now_ms() - i64::from(days) * 24 * 60 * 60 * 1000;

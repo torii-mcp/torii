@@ -3,7 +3,8 @@
 //! - `tail [-n <count>] [--follow]`: the latest records, one line each;
 //!   `--follow` keeps watching and prints each call as it arrives and ends;
 //! - `search [filters] [-n <count>]`: the newest records that match;
-//! - `show <id> [--output]`: everything about one record;
+//! - `show <id> [--output]`: everything about one record, found by its
+//!   number or by the last digits `tail` shows in bold;
 //! - `export [filters] [--format json|md] [--file <path>] [--with-output]`;
 //! - `prune [days]`: drop what is older than `days`, or than the retention.
 //!
@@ -11,6 +12,7 @@
 //! machine's key and never run through MCP.
 
 mod filter;
+mod ids;
 mod render;
 
 use std::collections::BTreeSet;
@@ -61,10 +63,11 @@ fn tail(paths: &ConfigPaths, args: &[String]) -> Result<()> {
     let ledger = open(paths)?;
     let mut entries = ledger.newest(count).map_err(audit_error)?;
     entries.reverse();
+    let mut ids = numbering(&ledger)?;
     let mut last = entries.last().map_or(0, |entry| entry.id);
     let mut running = BTreeSet::new();
     for entry in &entries {
-        println!("{}", render::line(entry));
+        println!("{}", render::line(entry, &ids));
         if is_running(entry) {
             running.insert(entry.id);
         }
@@ -79,7 +82,7 @@ fn tail(paths: &ConfigPaths, args: &[String]) -> Result<()> {
         for id in running.clone() {
             if let Some(entry) = ledger.call(id).map_err(audit_error)? {
                 if !is_running(&entry) {
-                    println!("{}", render::line(&entry));
+                    println!("{}", render::line(&entry, &ids));
                     running.remove(&id);
                 }
             } else {
@@ -88,7 +91,8 @@ fn tail(paths: &ConfigPaths, args: &[String]) -> Result<()> {
         }
         for entry in ledger.after(last).map_err(audit_error)? {
             last = entry.id;
-            println!("{}", render::line(&entry));
+            ids.include(entry.id);
+            println!("{}", render::line(&entry, &ids));
             if is_running(&entry) {
                 running.insert(entry.id);
             }
@@ -110,13 +114,17 @@ fn search(paths: &ConfigPaths, args: &[String]) -> Result<()> {
         }
     };
     query.limit = Some(count);
-    let mut found = open(paths)?.search(&query).map_err(audit_error)?;
+    let ledger = open(paths)?;
+    let mut found = ledger.search(&query).map_err(audit_error)?;
     found.reverse();
     if found.is_empty() {
         eprintln!("No record matches.");
     }
+    // The suffix comes from every kept record, not just the matches: it is
+    // what `show` needs to tell this one from all the others.
+    let ids = numbering(&ledger)?;
     for entry in &found {
-        println!("{}", render::line(entry));
+        println!("{}", render::line(entry, &ids));
     }
     Ok(())
 }
@@ -127,8 +135,8 @@ fn show(paths: &ConfigPaths, id: &str, rest: &[&str]) -> Result<()> {
         ["--output"] => true,
         _ => return Err(usage(&["show"])),
     };
-    let id = parse_id(id)?;
     let ledger = open(paths)?;
+    let id = ids::resolve(&ledger, id)?;
     let entry = ledger
         .call(id)
         .map_err(audit_error)?
@@ -273,11 +281,11 @@ fn parse_count(value: Option<&String>) -> Result<usize> {
         .ok_or_else(|| Error::Usage("-n takes a positive number of records".into()))
 }
 
-fn parse_id(value: &str) -> Result<i64> {
-    value
-        .trim_start_matches('#')
-        .parse::<i64>()
-        .map_err(|_| Error::Usage(format!("{value:?} is not a record number such as 128")))
+fn numbering(ledger: &Ledger) -> Result<ids::Ids> {
+    Ok(ids::Ids::new(
+        ledger.id_range().map_err(audit_error)?,
+        ids::bold_on_stdout(),
+    ))
 }
 
 fn usage(words: &[&str]) -> Error {

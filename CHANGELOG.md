@@ -21,6 +21,10 @@ Todas as mudanças relevantes deste projeto são registradas aqui. O formato seg
   que cifrar linha a linha e compila em um décimo do tempo do SQLCipher no Windows.
 - `torii log tail [-n] [--follow]`, `search` (provider, target, veredicto, janela de tempo,
   texto), `show <id> [--output]`, `export --format json|md` e `prune [dias]`.
+- Em `tail` e `search`, o número do registro fica alinhado à direita numa coluna de ao menos
+  7 dígitos, e os últimos dígitos que bastam para achá-lo aparecem em negrito (só num terminal,
+  nunca com `NO_COLOR` ou saída redirecionada). `torii log show` aceita esses dígitos finais:
+  `show 312` acha o registro que termina em 312, e lista os candidatos quando há mais de um.
 - Preferências `torii config log-retention` (90 dias), `log-tail` (20 registros) e `log-output`
   (`full`); todo servidor aplica a retenção quando inicia.
 
@@ -83,6 +87,12 @@ Todas as mudanças relevantes deste projeto são registradas aqui. O formato seg
 - O `torii.log` em texto deixou de ser escrito; o histórico passa a ficar em `audit.db`.
 - Uma chamada negada por falta de janela (`TORII_NO_GUI`) continua respondendo `human-deny` ao
   agente, mas o registro diz que ninguém foi perguntado.
+- Uma sessão recusada diz por quê. A janela de autenticação mostra a última linha do stderr do
+  validador (por exemplo, `ExpiredToken` ou falha de certificado de um antivírus que intercepta
+  TLS) em vez de "Sessão recusada", e o `identity-check-failed` devolve o motivo e nomeia o target,
+  não o provider de identidade. Os dois motivos ficam no detalhe dos eventos
+  `session-candidate-invalid` e `identity-check-failed`. A janela também passou a validar sem as
+  variáveis de `removed_env`, igual ao servidor.
 - Uma linha de comando que o CLI não reconhece mostra o uso do comando mais próximo, em vez do
   help geral sob o prefixo `invalid MCP tool arguments`. `torii target activate kubectl` sem o
   nome mostra a sintaxe de `target activate`.

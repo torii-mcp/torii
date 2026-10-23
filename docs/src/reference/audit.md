@@ -68,11 +68,17 @@ torii log prune 30                 # mantém só os últimos 30 dias
 Uma linha do `tail`:
 
 ```text
-2026-10-23 14:32:07  #128  aws/prd    ALLOW  temporary grant     exit 0   1.2s  s3api list-objects-v2 --bucket logs
-2026-10-23 14:32:31  #129  kubectl/dev DENY  deny rule                     3ms  delete pod api-7f9c
+2026-10-23 14:32:07     #128  aws/prd     ALLOW  temporary grant     exit 0   1.2s  s3api list-objects-v2 --bucket logs
+2026-10-23 14:32:31     #129  kubectl/dev DENY   deny rule                    3ms  delete pod api-7f9c
 ```
 
 Com `--follow`, uma chamada aparece quando chega e de novo quando termina. Assim, uma chamada esperando a sua resposta numa janela aparece enquanto espera.
+
+### Número do registro
+
+O número é sequencial e nunca é reaproveitado, nem depois de um `prune`: um `#128` anotado num ticket continua apontando para a mesma chamada. Em `tail` e `search` ele fica alinhado à direita numa coluna de ao menos 7 dígitos, que só se alarga se o banco passar de 9.999.999 registros.
+
+Num terminal, os **últimos dígitos** do número aparecem em negrito: são os que bastam para achar o registro. Como os números são sequenciais, a quantidade é a mesma em todas as linhas e depende só da faixa de números guardados. Num banco que nunca passou por `prune`, é o número inteiro. Depois que a retenção apaga os antigos, `#1015312` numa faixa de 15 mil registros mostra `15312` em negrito, e `torii log show 15312` basta. O número completo vale sempre; havendo mais de um registro com aqueles dígitos finais, o `show` lista os candidatos em vez de escolher. O negrito não aparece com `NO_COLOR`, com `TERM=dumb` nem quando a saída vai para um pipe ou arquivo.
 
 Filtros de `search` e `export`:
 

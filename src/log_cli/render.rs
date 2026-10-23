@@ -4,14 +4,15 @@
 use chrono::{Local, TimeZone};
 use serde::Serialize;
 
+use super::ids::Ids;
 use crate::audit::record::{CallRecord, EventRecord, Kind, Outcome, Output};
 use crate::audit::Entry;
 
 /// How much of the call a summary line shows.
 const CALL_CHARS: usize = 90;
 
-/// `2026-10-23 14:32:07  #128  aws/prd       ALLOW  temporary grant     exit 0   1.2s  s3api list-objects-v2 …`
-pub(super) fn line(entry: &Entry) -> String {
+/// `2026-10-23 14:32:07     #128  aws/prd       ALLOW  temporary grant     exit 0   1.2s  s3api list-objects-v2 …`
+pub(super) fn line(entry: &Entry, ids: &Ids) -> String {
     let record = &entry.record;
     let (verdict, how, what) = match record.kind {
         Kind::Call => (
@@ -31,9 +32,9 @@ pub(super) fn line(entry: &Entry) -> String {
         _ => String::new(),
     };
     format!(
-        "{}  #{:<5} {:<20} {:<5}  {:<26} {:<16} {what}",
+        "{}  {}  {:<20} {:<5}  {:<26} {:<16} {what}",
         time(record.started_at),
-        entry.id,
+        ids.render(entry.id),
         shorten(&record.scope, 20),
         verdict,
         shorten(&how, 26),
@@ -373,12 +374,15 @@ mod tests {
 
     #[test]
     fn a_line_says_who_what_and_how() {
-        let line = line(&Entry {
-            id: 128,
-            record: record(),
-        });
+        let line = line(
+            &Entry {
+                id: 128,
+                record: record(),
+            },
+            &Ids::new(Some((1, 128)), false),
+        );
         for part in [
-            "#128",
+            "    #128  aws/prd",
             "aws/prd",
             "ALLOW",
             "temporary grant",
@@ -423,10 +427,13 @@ mod tests {
         let mut failed = record();
         failed.outcome = Outcome::Error;
         failed.error = Some("could not find the executable \"aws\" in PATH\nmore".into());
-        let line = line(&Entry {
-            id: 3,
-            record: failed,
-        });
+        let line = line(
+            &Entry {
+                id: 3,
+                record: failed,
+            },
+            &Ids::new(Some((1, 3)), false),
+        );
         assert!(
             line.contains("ERROR") && line.contains("could not find"),
             "{line}"
