@@ -48,6 +48,10 @@ torii config dir show    # mostra a raiz efetiva
 torii self upgrade       # troca o binário pela última release; --check só informa
 ```
 
+Todo comando tem help em qualquer posição: `torii help target activate`,
+`torii target activate --help` ou `torii target activate help`. Um grupo sozinho
+(`torii config`, `torii log`) mostra o próprio help.
+
 **Upgrade, não update:** trocar a versão de algo instalado é sempre `upgrade` — do binário
 (`self upgrade`) ou de um pacote (`provider upgrade`). Não existe `update` no Torii, porque
 não há índice local para sincronizar.
@@ -81,7 +85,7 @@ torii provider search              # consulta o catálogo
 torii provider search kubernetes
 torii provider install aws         # nome do catálogo
 torii provider install ./examples/providers/az   # diretório, .zip, .tar.gz ou URL HTTPS
-torii provider setup aws readonly  # aplica política de exemplo read-only
+torii provider setup aws readonly  # aplica política de exemplo read-only (ou: provider apply)
 torii provider list                # tool, nome, executável, versão e origem
 torii provider upgrade aws         # só arquivos do pacote; nunca rules, .env ou estado
 ```
@@ -142,7 +146,7 @@ torii target add aws_profile producao --profile empresa-producao --account-id 11
 torii target list kubectl          # aliases e bindings (só no control plane humano)
 torii target show kubectl dev
 torii target activate kubectl dev --for 30   # concede o lease; substitui os ativos da tool
-torii target status kubectl        # leases vivos e expirações
+torii target status kubectl        # leases vivos e expirações (ou: target check)
 torii target clear kubectl         # revoga todos os leases da tool
 torii target rename kubectl dev billing_dev  # mantém política e sessão; volta inativo
 torii target remove kubectl dev --force

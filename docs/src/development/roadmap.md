@@ -11,7 +11,7 @@ Esta página distingue deliberadamente o que existe do que ainda precisa de prov
 - auth `environment` e `inherited`;
 - lock de renovação por provider simples ou target;
 - runner capturado, sem shell e com truncamento;
-- auditoria local;
+- auditoria de toda chamada e de todo comando humano que muda estado, num SQLite3 Multiple Ciphers cifrado por inteiro, com chave no cofre do sistema e `torii log` para acompanhar, buscar, detalhar, exportar e podar;
 - migração AWS Gate;
 - exemplos AWS e Kubernetes;
 - tool Kubernetes única com targets por context;
@@ -20,6 +20,9 @@ Esta página distingue deliberadamente o que existe do que ainda precisa de prov
 - pacotes declarativos locais/remotos, catálogo pesquisável e upgrade que preserva estado;
 - instaladores por script para Linux e Windows, com verificação do checksum publicado;
 - `self upgrade` humano, que confere o checksum antes de trocar o binário;
+- janelas com barra própria, dobra até a barra, temas `dark`, `light` e `nord`, cor própria na barra dobrada e janela de teste;
+- preferências humanas em `torii config` e help em todos os comandos;
+- versão do Rust fixada em `rust-toolchain.toml`, igual no CI e nas máquinas;
 
 ## Reconhecido, não implementado
 
@@ -40,7 +43,9 @@ O schema aceita esses nomes para manter a direção arquitetural explícita, mas
 - daemon multiusuário;
 - tool MCP de reauth ou kill;
 - CLI operacional;
-- streaming e timeout de execução.
+- streaming e timeout de execução;
+- auditoria à prova de adulteração por quem tem a chave (cadeia de hash ou assinatura dos registros): a cifra impede ler e alterar páginas sem a chave, mas o próprio usuário da máquina pode apagar registros;
+- envio da auditoria para um sistema central (SIEM); hoje ela é local e sai por `torii log export`.
 
 ## Regra de evolução
 

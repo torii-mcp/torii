@@ -30,7 +30,8 @@ O projeto separa dois mundos:
 - targets são aliases cadastrados pelo humano, nunca contexts livres fornecidos pelo agente;
 - aliases target-aware começam inativos e exigem um lease humano temporário antes de grants, ambiente ou autenticação;
 - aliases `aws_profile` fixam profile e conta esperada fora do MCP e conferem a conta antes da execução;
-- decisões e exit codes são auditados sem registrar credenciais.
+- toda chamada é registrada inteira (o que foi pedido, por quê, o veredicto, como foi decidido e o que voltou) num banco cifrado por inteiro com uma chave presa à máquina, e credenciais nunca entram;
+- o humano acompanha tudo ao vivo com `torii log tail --follow`, e busca, detalha e exporta o histórico.
 
 ## O que o Torii não é
 

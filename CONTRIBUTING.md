@@ -48,6 +48,8 @@ mdbook build docs
 - mudou o schema de provider? atualize `docs/src/reference/provider-schema.md` e ao menos um
   pacote em `examples/providers/`;
 - mudou a tool MCP? atualize `docs/src/reference/mcp-api.md`;
+- mudou um comando do CLI? atualize o help em `src/help.rs`; o teste de cobertura falha sem ele;
+- `vendor/libsqlite3-sys` só muda seguindo `vendor/README.md`, com as alterações marcadas `Torii:`;
 - mudou o control plane? atualize `docs/src/reference/cli.md`;
 - não crie abstração genérica antes de dois providers reais provarem a necessidade;
 - não declare suporte a uma estratégia de autenticação só porque o schema aceita seu nome;

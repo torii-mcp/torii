@@ -87,6 +87,9 @@ Todas as mudanças relevantes deste projeto são registradas aqui. O formato seg
   help geral sob o prefixo `invalid MCP tool arguments`. `torii target activate kubectl` sem o
   nome mostra a sintaxe de `target activate`.
 - Os textos de help saíram do `app.rs` para `src/help.rs`.
+- A versão do Rust passa a ser fixada em `rust-toolchain.toml` (1.99.0), igual no CI e nas
+  máquinas: antes, o CI usava o stable do dia e um lint novo quebrava o build sem aparecer
+  localmente. O `AGENTS.md` pede que cada sessão de trabalho avalie atualizá-la.
 
 ## [0.4.0] — 2026-09-04
 

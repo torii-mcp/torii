@@ -58,3 +58,20 @@ cargo run
 ```
 
 Normalmente o cliente MCP inicia esse processo. Em headless, `TORII_NO_GUI=1` nega chamadas não resolvidas e cancela coleta de autenticação com segurança.
+
+## 7. Acompanhar o que o agente faz
+
+```powershell
+cargo run -- log tail --follow
+```
+
+Cada chamada aparece quando chega, inclusive enquanto espera a sua resposta numa janela, e de novo quando termina, com o veredicto e como ele foi decidido. `log show <id> --output` mostra tudo sobre uma chamada, inclusive o que ela devolveu. Ver [Auditoria](../reference/audit.md).
+
+## 8. Ajustar as janelas, se quiser
+
+```powershell
+cargo run -- config theme test light
+cargo run -- config theme set light
+```
+
+`test` abre uma janela de autorização de mentira para você ver o tema antes de escolher. Ver [Personalizar as janelas](../guides/appearance.md).

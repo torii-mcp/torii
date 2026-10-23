@@ -18,6 +18,10 @@ O `.cargo/config.toml` define `TORII_AUDIT_KEYSTORE=file` para tudo o que o `car
 
 Testes unitários cobrem parsing de ambiente, matching, grants, pacotes em diretório/archive, setup, upgrade preservando estado e truncamento UTF-8. `tests/security_flow.rs` prova que deny explícito e default deny headless encerram antes de ambiente, autenticação ou executável. `tests/mcp_readonly_integration.rs` negocia MCP com um processo Torii real, executa uma operação local de leitura permitida e confirma que outra leitura explicitamente negada não inicia o provider.
 
+A auditoria tem testes em três níveis. Os do banco (`src/audit/ledger.rs`) provam que nada do conteúdo, nem a estrutura das tabelas, aparece no arquivo ou no WAL; que todos os campos e a saída voltam byte a byte; que seis escritores ao mesmo tempo não perdem nem misturam registros; que a busca filtra por índice e por texto sem diferenciar maiúsculas acentuadas; e que um banco de outra chave é posto de lado sem ser sobrescrito. `tests/security_flow.rs` confere que a chamada negada é registrada inteira e que valores do `.env` nunca chegam ao log. `tests/audit_integration.rs` roda três servidores Torii em paralelo, compara a saída gravada com a que o agente recebeu e exercita `torii log tail`, `search`, `show` e `export` no binário real.
+
+`src/help.rs` tem um teste que percorre todos os comandos do roteador e exige help para cada um, em todas as formas de pedir. Um comando novo sem help o faz falhar.
+
 ## Regressões prioritárias
 
 Toda mudança no fluxo deve preservar testes para:

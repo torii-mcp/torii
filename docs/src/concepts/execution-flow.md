@@ -62,6 +62,10 @@ Antes do launch, o lease é conferido uma última vez. Stdin do filho é nulo. S
 
 Torii devolve provider, target quando aplicável, decisão e, quando houve execução, exit code, stdout, stderr e indicador de truncamento. Exit code diferente de zero pertence ao provider e continua visível no resultado.
 
+## Registro
+
+O registro de auditoria da chamada é aberto antes do dispatch, para que até uma chamada recusada por um target desconhecido ou uma flag travada deixe rastro. Cada etapa acima acrescenta um evento: o deny ou accept que casou, o grant, a janela e a resposta, o lease, a sessão e a identidade, o processo. No fim, o registro recebe o veredicto, como ele foi decidido, o exit code e a saída que voltou ao agente. Uma falha da auditoria nunca muda a decisão nem interrompe a chamada. Ver [Auditoria](../reference/audit.md).
+
 ## Concorrência
 
 Chamadas que herdam providers diferentes podem validar sessões independentemente. Chamadas concorrentes que usam o mesmo provider de lifecycle compartilham o lock desse provider. O estado de lease usa também um arquivo de lock exclusivo do sistema operacional e revisão persistida, pois `target activate`, `target clear` e servidores MCP podem coexistir; o handle é liberado automaticamente no término do processo, sem TTL ou limpeza por timeout de lock stale.

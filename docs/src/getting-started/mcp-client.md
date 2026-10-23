@@ -48,7 +48,7 @@ Além de uma tool por provider, o Torii publica `torii_policy`, uma consulta som
 
 ## Integridade do stdout
 
-Stdout pertence ao protocolo. Não envolva o Torii com scripts que imprimam banners, mensagens de login ou diagnósticos no mesmo stream. Mensagens humanas devem ir para stderr; a auditoria fica em `torii.log`.
+Stdout pertence ao protocolo. Não envolva o Torii com scripts que imprimam banners, mensagens de login ou diagnósticos no mesmo stream. Mensagens humanas devem ir para stderr; a auditoria fica em `audit.db`, lida com `torii log`.
 
 ## Chamada
 

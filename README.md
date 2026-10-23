@@ -24,6 +24,7 @@ O humano continua usando `aws`, `kubectl`, `az` ou `gcloud` diretamente. O agent
 - grants temporários e aprovação humana em janela local;
 - autenticação genérica `environment` completa e `inherited` para providers sem coleta;
 - janela de autenticação gerada pelos campos do provider e clipboard com allowlist;
+- janelas com barra de título própria, que dobram até a barra mantendo a ação principal, com tema `dark`, `light` ou `nord` e cor própria na barra dobrada;
 - validação antes da substituição atômica da sessão;
 - grants, cache, autenticação e lock isolados por provider/target;
 - credenciais e `.env` carregados somente depois da autorização;
@@ -32,6 +33,8 @@ O humano continua usando `aws`, `kubectl`, `az` ou `gcloud` diretamente. O agent
 - auditoria de toda chamada num SQLite cifrado com chave presa à máquina, com `torii log tail --follow`, busca, detalhe e exportação; credenciais nunca entram;
 - migração automática e não destrutiva de `~/.config/.awsgate` para o provider AWS quando a configuração padrão do Torii ainda não existe;
 - control plane humano para instalar, pesquisar, configurar e atualizar providers sem expor essas ações ao MCP;
+- preferências humanas em `torii config` (tema, barra dobrada, retenção e saída da auditoria), com verbos `list`, `set`, `reset` e `test`;
+- `help`, `--help` e `-h` em todo comando, antes ou depois das palavras;
 
 `session_command` e `credential_file` são reconhecidos na configuração e recusados com erro explícito; serão implementados quando um provider real provar a necessidade.
 
@@ -125,6 +128,13 @@ Configuração típica do cliente MCP:
 }
 ```
 
+Para acompanhar o que o agente executa, em outro terminal:
+
+```powershell
+torii log tail --follow        # cada chamada quando chega e quando termina
+torii log show 128 --output    # tudo sobre uma chamada, com a saída
+```
+
 Use `TORII_NO_GUI=1` em CI/headless. Nesse modo, chamadas não resolvidas são negadas e autenticação que exija coleta é cancelada com segurança. O Torii não usa configuração nem variáveis de ambiente do AWS Gate como fallback.
 
 ## Provider
@@ -153,11 +163,16 @@ accept:
 ## Desenvolvimento
 
 ```powershell
-cargo fmt --check
-cargo test
+cargo fmt --all -- --check
+cargo check --all-targets
+cargo test --all-targets
 cargo clippy --all-targets -- -D warnings
 mdbook build docs
 ```
+
+A versão do Rust é fixada em `rust-toolchain.toml` e o `rustup` a instala sozinho. O SQLite da
+auditoria é o SQLite3 Multiple Ciphers, por uma cópia do `libsqlite3-sys` em `vendor/`
+(veja `vendor/README.md`).
 
 No Windows GNU, `eframe` precisa de uma instalação MinGW-w64 completa (`dlltool` e `as.exe`) no `PATH`, como no AWS Gate de referência.
 

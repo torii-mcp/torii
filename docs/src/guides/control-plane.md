@@ -48,6 +48,29 @@ torii config dir show
 
 Init cria somente settings e raiz. Providers são sempre uma escolha explícita.
 
+## Acompanhar a auditoria
+
+```powershell
+torii log tail --follow
+torii log search --denied --since 1d
+torii log show 128 --output
+torii log export --since 2026-10-01 --format md --file auditoria.md
+torii log prune 30
+```
+
+Toda chamada do agente e todo comando humano que muda estado ficam registrados, cifrados, em `audit.db`. Ver [Auditoria](../reference/audit.md).
+
+## Preferências
+
+```powershell
+torii config list
+torii config theme set nord
+torii config fbc set salvia
+torii config log-retention set 180
+```
+
+Cada preferência responde `list`, `set`, `reset` e, as de aparência, `test`. Ver [Personalizar as janelas](appearance.md) e [Auditoria](../reference/audit.md).
+
 ## Reautenticar
 
 ```powershell

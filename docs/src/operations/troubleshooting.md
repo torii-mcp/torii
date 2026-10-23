@@ -48,6 +48,22 @@ O provider não possui coleta gerenciada. Renove a sessão pelo CLI humano ou pe
 
 No Windows GNU, coloque uma distribuição MinGW-w64 completa no `PATH` durante build/test.
 
+## `the audit log is not recording`
+
+O servidor não conseguiu abrir o `audit.db` e segue funcionando sem auditoria; o motivo vem na mesma linha do stderr. Causas comuns: a raiz de configuração sem permissão de escrita, o cofre de credenciais indisponível no Windows ou um `audit.key` danificado. Corrija e reinicie o cliente MCP; `torii log tail` mostra o mesmo erro fora do MCP.
+
+## `the audit log does not open with this machine's key`
+
+O `audit.db` foi cifrado com outra chave: o cofre perdeu a entrada `torii-audit`, o perfil do Windows foi recriado ou o arquivo veio de outra máquina. O Torii move o banco para `audit-<data>.unreadable.db`, sem sobrescrever, e começa um novo. O arquivo posto de lado só abre de novo com a chave original.
+
+## `no credential store is available`
+
+Linux ou macOS sem cofre (um servidor sem Secret Service, por exemplo). A chave da auditoria foi para `audit.key`, legível só pelo dono, e quem copiar o disco consegue ler o log. Instale e desbloqueie um Secret Service (GNOME Keyring ou KWallet) para guardar a chave no cofre.
+
+## `invalid setting` ou `invalid YAML in …settings.yaml`
+
+Um valor de preferência não é aceito. `invalid setting` vem de `torii config … set` com um valor desconhecido, que não é gravado, ou de uma retenção fora de 1 a 3650 dias no arquivo. `invalid YAML` vem de um `settings.yaml` editado à mão com um tema ou cor que não existem. Com `torii config <preferência> list` você vê os valores possíveis, e com `set` grava um válido. Enquanto o arquivo tiver um valor inválido, o servidor não inicia.
+
 ## Cliente MCP não inicializa
 
 - execute o binário diretamente e verifique erros em stderr;
