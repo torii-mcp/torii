@@ -8,6 +8,7 @@ pub mod core;
 pub mod error;
 pub mod help;
 pub mod jasper;
+pub mod log_cli;
 pub mod mcp;
 pub mod policy;
 pub mod providers;

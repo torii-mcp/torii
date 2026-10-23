@@ -5,6 +5,7 @@ use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use crate::audit;
 use crate::config::ConfigPaths;
 use crate::error::{Error, Result};
 use crate::jasper::rules::{self, Evaluation, Rules};
@@ -420,6 +421,20 @@ pub fn edit(
 
     let text = read_text(&draft)?;
     write_atomic(&path, &text)?;
+    let before = serde_yaml::from_str::<Rules>(&original).unwrap_or_default();
+    audit::record(
+        paths,
+        &match target {
+            Some(target) => format!("{tool}/{target}"),
+            None => tool.to_owned(),
+        },
+        if creating {
+            "policy-created"
+        } else {
+            "policy-edited"
+        },
+        &rule_changes(&before, &edited),
+    );
     if creating {
         eprintln!("{scope} created at {}.", path.display());
     } else {
@@ -463,6 +478,48 @@ fn seeded_from_shared(provider: &Provider, tool: &str) -> Result<String> {
 
 /// Uma política só substitui a anterior depois de parsear e de compilar cada
 /// regra: um regex inválido em disco faz a avaliação falhar fechada em runtime.
+/// What an edit changed, for the audit record: the rules it added and removed
+/// in each vector, such as `deny +[get secrets] · accept -[delete]`.
+fn rule_changes(before: &Rules, after: &Rules) -> String {
+    let vector = |name: &str, old: &[String], new: &[String]| {
+        let added = new
+            .iter()
+            .filter(|rule| !old.contains(rule))
+            .collect::<Vec<_>>();
+        let removed = old
+            .iter()
+            .filter(|rule| !new.contains(rule))
+            .collect::<Vec<_>>();
+        let list = |rules: &[&String]| {
+            rules
+                .iter()
+                .map(|rule| rule.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let mut parts = Vec::new();
+        if !added.is_empty() {
+            parts.push(format!("+[{}]", list(&added)));
+        }
+        if !removed.is_empty() {
+            parts.push(format!("-[{}]", list(&removed)));
+        }
+        (!parts.is_empty()).then(|| format!("{name} {}", parts.join(" ")))
+    };
+    let changes = [
+        vector("deny", &before.deny, &after.deny),
+        vector("accept", &before.accept, &after.accept),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>();
+    if changes.is_empty() {
+        "rules unchanged; comments or layout only".into()
+    } else {
+        changes.join(" · ")
+    }
+}
+
 fn validate(text: &str, path: &Path) -> Result<Rules> {
     if text.trim().is_empty() {
         return Err(Error::InvalidArguments(
@@ -633,6 +690,22 @@ mod tests {
             deny: deny.iter().map(|rule| (*rule).to_string()).collect(),
             accept: accept.iter().map(|rule| (*rule).to_string()).collect(),
         }
+    }
+
+    /// O registro de auditoria de uma edição diz o que entrou e o que saiu de
+    /// cada vetor, não o arquivo inteiro.
+    #[test]
+    fn an_edit_is_audited_as_the_rules_it_added_and_removed() {
+        let before = rules("1.0", &["delete"], &["get", "describe"]);
+        let after = rules("1.0", &["delete", "get secrets"], &["get"]);
+        assert_eq!(
+            rule_changes(&before, &after),
+            "deny +[get secrets] · accept -[describe]"
+        );
+        assert_eq!(
+            rule_changes(&before, &before),
+            "rules unchanged; comments or layout only"
+        );
     }
 
     #[test]

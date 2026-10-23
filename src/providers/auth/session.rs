@@ -1,5 +1,5 @@
 use crate::audit;
-use crate::config::{env_file, AuthPaths, ConfigPaths};
+use crate::config::{env_file, AuthPaths};
 use crate::control;
 use crate::error::{Error, Result};
 use crate::providers::{AuthStrategy, IdentityProbe, Provider};
@@ -19,13 +19,17 @@ use tokio::sync::Mutex;
 pub struct SessionScope<'a> {
     pub audit: &'a str,
     pub requested_for: Option<&'a str>,
+    /// Where the session events go: the call that needs the session, or a
+    /// record of their own for a human `reauth`.
+    pub trail: audit::Trail<'a>,
 }
 
 impl<'a> SessionScope<'a> {
-    pub fn provider(audit: &'a str) -> Self {
+    pub fn provider(audit: &'a str, trail: audit::Trail<'a>) -> Self {
         Self {
             audit,
             requested_for: None,
+            trail,
         }
     }
 }
@@ -36,7 +40,6 @@ pub struct SessionEnvironment<'a> {
 }
 
 pub async fn ensure_valid(
-    root: &ConfigPaths,
     provider: &Provider,
     paths: &AuthPaths,
     auth_lock: &Mutex<()>,
@@ -50,7 +53,6 @@ pub async fn ensure_valid(
     match provider.config.auth.strategy {
         AuthStrategy::Inherited => {
             ensure_inherited(
-                root,
                 provider,
                 paths,
                 scope,
@@ -62,7 +64,6 @@ pub async fn ensure_valid(
         }
         AuthStrategy::Environment => {
             ensure_environment(
-                root,
                 provider,
                 paths,
                 scope,
@@ -80,7 +81,6 @@ pub async fn ensure_valid(
 }
 
 async fn ensure_inherited(
-    root: &ConfigPaths,
     provider: &Provider,
     paths: &AuthPaths,
     scope: SessionScope<'_>,
@@ -95,7 +95,7 @@ async fn ensure_inherited(
         });
     }
     if provider.config.auth.validate.is_none() {
-        audit::log(root, scope.audit, "session-unchecked", "-", "");
+        scope.trail.event(scope.audit, "session-unchecked", "");
         return Ok(Vec::new());
     }
     if session_cached(provider, paths) {
@@ -103,7 +103,7 @@ async fn ensure_inherited(
     }
     if validate(provider, persistent_env, &[], removed_env).await? {
         record_success(paths);
-        audit::log(root, scope.audit, "session-ok", "-", "");
+        scope.trail.event(scope.audit, "session-ok", "");
         Ok(Vec::new())
     } else {
         Err(Error::SessionInvalid {
@@ -113,7 +113,6 @@ async fn ensure_inherited(
 }
 
 async fn ensure_environment(
-    root: &ConfigPaths,
     provider: &Provider,
     paths: &AuthPaths,
     scope: SessionScope<'_>,
@@ -130,20 +129,18 @@ async fn ensure_environment(
             && validate(provider, persistent_env, &existing, removed_env).await?
         {
             record_success(paths);
-            audit::log(root, scope.audit, "session-ok", "-", "");
+            scope.trail.event(scope.audit, "session-ok", "");
             return Ok(existing);
         }
     }
 
-    audit::log(
-        root,
+    scope.trail.event(
         scope.audit,
         if force {
             "reauth-forced"
         } else {
             "session-invalid"
         },
-        "-",
         "",
     );
     let templates = provider.config.auth.inject.environment.clone();
@@ -172,7 +169,9 @@ async fn ensure_environment(
     )
     .await?;
     for _ in 0..prompt.invalid_attempts {
-        audit::log(root, scope.audit, "session-candidate-invalid", "-", "");
+        scope
+            .trail
+            .event(scope.audit, "session-candidate-invalid", "");
     }
     let Some(fields) = prompt.fields else {
         return Err(Error::AuthCancelled(scope.audit.into()));
@@ -181,7 +180,7 @@ async fn ensure_environment(
     let candidate = exec::interpolate_environment(&templates, &fields);
     persist_credentials(provider, paths, &fields)?;
     record_success(paths);
-    audit::log(root, scope.audit, "session-refreshed", "-", "");
+    scope.trail.event(scope.audit, "session-refreshed", "");
     Ok(candidate)
 }
 
@@ -194,7 +193,7 @@ async fn ensure_environment(
 /// pre-flight error naming expected vs. observed identity.
 #[allow(clippy::too_many_arguments)]
 pub async fn verify_identity(
-    root: &ConfigPaths,
+    trail: audit::Trail<'_>,
     probe: &IdentityProbe,
     scope: &AuthPaths,
     audit_scope: &str,
@@ -225,7 +224,7 @@ pub async fn verify_identity(
     .filter(|out| out.exit_code == 0 && !out.truncated)
     .and_then(|out| identity_field(&out.stdout, &probe.field));
     let Some(observed) = observed else {
-        audit::log(root, audit_scope, "identity-check-failed", "-", "");
+        trail.event(audit_scope, "identity-check-failed", "");
         return Err(Error::IdentityCheckFailed {
             target: audit_scope.into(),
         });
@@ -233,7 +232,7 @@ pub async fn verify_identity(
     if observed != expected {
         // The observed/expected identities travel only in the returned error,
         // never into the persisted audit log.
-        audit::log(root, audit_scope, "identity-mismatch", "-", "");
+        trail.event(audit_scope, "identity-mismatch", "");
         return Err(Error::IdentityMismatch {
             target: audit_scope.into(),
             expected: expected.into(),
@@ -241,7 +240,7 @@ pub async fn verify_identity(
         });
     }
     record_identity(scope, expected);
-    audit::log(root, audit_scope, "identity-ok", "-", "");
+    trail.event(audit_scope, "identity-ok", "");
     Ok(())
 }
 

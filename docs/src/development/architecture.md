@@ -8,7 +8,7 @@ src/
 ├── help.rs                 textos de help e as formas de pedir ajuda
 ├── targets.rs              control plane de targets
 ├── policy.rs               edição humana validada das políticas
-├── config_cli.rs           `torii config`: preferências do humano
+├── config_cli/             `torii config`: aparência e preferências de log
 ├── self_upgrade.rs         troca verificada do próprio binário
 ├── agents/codex.rs         integração Codex e guard compartilhado de shell
 ├── agents/portable.rs      adapters JSON: Claude, Gemini, Cursor, Antigravity, opencode, Copilot e pi
@@ -27,7 +27,8 @@ src/
 ├── control/preview.rs      janela de exemplo do `torii config … test`
 ├── control/theme/          paletas dark, light e nord, e a cor da barra dobrada
 ├── config/                 paths, settings, env e aparência
-├── audit.rs                log sanitizado
+├── audit/                  auditoria: registro, banco SQLite3 Multiple Ciphers, busca e chave no cofre
+├── log_cli/                `torii log`: tail, search, show, export e prune
 └── error.rs                erros públicos seguros
 ```
 
@@ -51,3 +52,4 @@ O servidor usa stdout para MCP, então prompts são abertos por uma nova execuç
 - mudança MCP: `mcp/server.rs` e `reference/mcp-api.md`;
 - novo controle humano: `app.rs`/`targets.rs`/`control/`, nunca como tool de agente.
 - mudança em integração de agente: `agents/`, `guides/agents.md` e `reference/cli.md`.
+- atualizar o SQLite3 Multiple Ciphers ou o `libsqlite3-sys`: `vendor/`, seguindo `vendor/README.md`.

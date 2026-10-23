@@ -1,4 +1,5 @@
 use super::appearance::{FoldedBarColor, Theme};
+use super::logging::{self, LogOutput};
 use crate::error::{Error, Result};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -21,6 +22,15 @@ pub struct Settings {
     /// Color of a prompt window's title bar while the window is folded.
     #[serde(default)]
     pub folded_bar_color: FoldedBarColor,
+    /// Days an audit record is kept before the automatic prune drops it.
+    #[serde(default = "default_log_retention_days")]
+    pub log_retention_days: u32,
+    /// How many records `torii log tail` shows without `-n`.
+    #[serde(default = "default_log_tail_lines")]
+    pub log_tail_lines: u32,
+    /// Whether an audit record keeps what the call returned.
+    #[serde(default)]
+    pub log_output: LogOutput,
 }
 
 impl Default for Settings {
@@ -31,6 +41,9 @@ impl Default for Settings {
             default_target_minutes: DEFAULT_TARGET_MINUTES,
             theme: Theme::default(),
             folded_bar_color: FoldedBarColor::default(),
+            log_retention_days: logging::DEFAULT_RETENTION_DAYS,
+            log_tail_lines: logging::DEFAULT_TAIL_LINES,
+            log_output: LogOutput::default(),
         }
     }
 }
@@ -43,6 +56,12 @@ fn default_grant_minutes() -> u32 {
 }
 fn default_target_minutes() -> u32 {
     DEFAULT_TARGET_MINUTES
+}
+fn default_log_retention_days() -> u32 {
+    logging::DEFAULT_RETENTION_DAYS
+}
+fn default_log_tail_lines() -> u32 {
+    logging::DEFAULT_TAIL_LINES
 }
 
 pub fn load(path: &Path) -> Result<Settings> {
@@ -62,6 +81,27 @@ pub fn load(path: &Path) -> Result<Settings> {
             "default_target_minutes in {} must be between 1 and 1440",
             path.display()
         )));
+    }
+    for (name, value, range) in [
+        (
+            "log_retention_days",
+            settings.log_retention_days,
+            logging::RETENTION_DAYS,
+        ),
+        (
+            "log_tail_lines",
+            settings.log_tail_lines,
+            logging::TAIL_LINES,
+        ),
+    ] {
+        if !range.contains(&value) {
+            return Err(Error::InvalidSetting(format!(
+                "{name} in {} must be between {} and {}",
+                path.display(),
+                range.start(),
+                range.end()
+            )));
+        }
     }
     Ok(settings)
 }

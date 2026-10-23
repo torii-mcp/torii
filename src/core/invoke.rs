@@ -76,6 +76,7 @@ impl Invoker {
     /// environment to inject into the invoked process.
     async fn authenticate_scope(
         &self,
+        transaction: &audit::Transaction,
         scope: &InvocationScope,
         auth_provider: &Provider,
         auth_paths: &crate::config::AuthPaths,
@@ -83,8 +84,8 @@ impl Invoker {
         removed_env: &[&str],
     ) -> Result<(Vec<(String, String)>, Vec<(String, String)>)> {
         // The identity provider authenticates with its own environment. Session
-        // and identity events are audited under that provider's name, while the
-        // caller records preflight markers under the invocation scope.
+        // and identity events are recorded in this call under that provider's
+        // name, while the caller records preflight markers under the call scope.
         let idp_env = env_file::load(
             &auth_provider
                 .paths
@@ -92,7 +93,6 @@ impl Invoker {
                 .join(&auth_provider.config.environment.file),
         )?;
         let session = session::ensure_valid(
-            &self.paths,
             auth_provider,
             auth_paths,
             auth_lock,
@@ -100,6 +100,7 @@ impl Invoker {
                 audit: &auth_provider.config.name,
                 // Only a target invocation has something to disambiguate.
                 requested_for: scope.target.as_ref().map(|_| scope.audit_scope.as_str()),
+                trail: audit::Trail::Call(transaction),
             },
             session::SessionEnvironment {
                 persistent_env: &idp_env,
@@ -129,7 +130,7 @@ impl Invoker {
             (&scope.auth.expect, &auth_provider.config.auth.identity)
         {
             session::verify_identity(
-                &self.paths,
+                audit::Trail::Call(transaction),
                 probe,
                 auth_paths,
                 &auth_provider.config.name,
@@ -143,14 +144,42 @@ impl Invoker {
         Ok((idp_env, auth_env))
     }
 
+    /// Run one MCP call, recording it whole: the record begins before anything
+    /// is decided, so a call refused for a bad target or argument is recorded
+    /// too, and closes with the verdict and what the execution returned.
     pub async fn invoke(
         &self,
         tool: &str,
         target_name: Option<&str>,
         args: &[String],
         // The agent's own account of why it makes this call. Shown to the human
-        // in a prompt as unverified text; it never takes part in a decision and
-        // is never audited.
+        // in a prompt as unverified text and recorded sealed; it never takes
+        // part in a decision.
+        description: Option<&str>,
+    ) -> Result<InvocationResult> {
+        let transaction = audit::Transaction::begin(
+            &self.paths,
+            audit::Call {
+                tool,
+                target: target_name,
+                args,
+                description,
+                keep_output: self.settings.log_output.keeps_output(),
+            },
+        );
+        let result = self
+            .invoke_recorded(&transaction, tool, target_name, args, description)
+            .await;
+        transaction.close(closing(&result));
+        result
+    }
+
+    async fn invoke_recorded(
+        &self,
+        transaction: &audit::Transaction,
+        tool: &str,
+        target_name: Option<&str>,
+        args: &[String],
         description: Option<&str>,
     ) -> Result<InvocationResult> {
         if args.is_empty() {
@@ -163,13 +192,6 @@ impl Invoker {
             .get(tool)
             .ok_or_else(|| Error::ProviderNotFound(tool.into()))?;
         let scope = resolve_scope(&provider, target_name, args)?;
-        let audit_rule = args
-            .iter()
-            .take(2)
-            .map(String::as_str)
-            .collect::<Vec<_>>()
-            .join(" ");
-        audit::log(&self.paths, &scope.audit_scope, "invoke", &audit_rule, "");
 
         let policy = rules::load_effective(&scope.rules, scope.target_rules.as_deref())?;
 
@@ -182,25 +204,13 @@ impl Invoker {
                 source: "forbidden-arg".into(),
                 rule: Some(argument.clone()),
             };
-            audit::log(
-                &self.paths,
-                &scope.audit_scope,
-                "denied-forbidden-arg",
-                argument,
-                "",
-            );
+            transaction.event("denied-forbidden-arg", &audit::detail(argument, ""));
             return Ok(invocation_result(&provider, &scope, decision, None));
         }
 
         let min_tokens = provider.config.policy.minimum_accept_tokens;
         for invalid in policy.invalid_accepts(min_tokens) {
-            audit::log(
-                &self.paths,
-                &scope.audit_scope,
-                "invalid-accept",
-                invalid,
-                "ignored",
-            );
+            transaction.event("invalid-accept", &audit::detail(invalid, "ignored"));
         }
 
         // Normalize argv for evaluation only — the executed command still uses the
@@ -210,13 +220,7 @@ impl Invoker {
         let compiled = match policy.compile() {
             Ok(compiled) => compiled,
             Err(error) => {
-                audit::log(
-                    &self.paths,
-                    &scope.audit_scope,
-                    "invalid-rule",
-                    &error.to_string(),
-                    "",
-                );
+                transaction.event("invalid-rule", &audit::detail(&error.to_string(), ""));
                 return Err(error);
             }
         };
@@ -227,12 +231,12 @@ impl Invoker {
                 source: "explicit-deny".into(),
                 rule: Some(rule.clone()),
             };
-            audit::log(&self.paths, &scope.audit_scope, "denied-explicit", rule, "");
+            transaction.event("denied-explicit", &audit::detail(rule, ""));
             return Ok(invocation_result(&provider, &scope, decision, None));
         }
 
         if !self
-            .ensure_target_access(&provider, &scope, description)
+            .ensure_target_access(transaction, &provider, &scope, description)
             .await?
         {
             return Ok(target_access_denied_result(
@@ -244,13 +248,7 @@ impl Invoker {
 
         let decision = match evaluation {
             Evaluation::Allowed { rule } => {
-                audit::log(
-                    &self.paths,
-                    &scope.audit_scope,
-                    "allowed-by-rules",
-                    &rule,
-                    "",
-                );
+                transaction.event("allowed-by-rules", &audit::detail(&rule, ""));
                 PolicyDecision {
                     result: DecisionResult::Allow,
                     source: "rules".into(),
@@ -259,12 +257,12 @@ impl Invoker {
             }
             Evaluation::Unresolved => {
                 self.resolve_unresolved(
+                    transaction,
                     &provider.config.policy.ignore_args,
                     &scope,
                     &policy,
                     args,
                     min_tokens,
-                    &audit_rule,
                     description,
                 )
                 .await?
@@ -277,12 +275,9 @@ impl Invoker {
         }
 
         if !self.target_access_is_active(&provider, &scope)? {
-            audit::log(
-                &self.paths,
-                &scope.audit_scope,
+            transaction.event(
                 "target-access-lost",
-                scope.target.as_deref().unwrap_or("-"),
-                "before-environment",
+                &audit::detail(scope.target.as_deref().unwrap_or("-"), "before-environment"),
             );
             return Ok(target_access_denied_result(
                 &provider,
@@ -308,15 +303,13 @@ impl Invoker {
         let removed_owned = auth_provider.config.auth.removed_env.clone();
         let removed_env: Vec<&str> = removed_owned.iter().map(String::as_str).collect();
 
-        audit::log(
-            &self.paths,
-            &scope.audit_scope,
+        transaction.event(
             "preflight-provider",
-            &scope.auth.provider,
-            "",
+            &audit::detail(&scope.auth.provider, ""),
         );
         let auth_env = match self
             .authenticate_scope(
+                transaction,
                 &scope,
                 &auth_provider,
                 &auth_paths,
@@ -326,23 +319,11 @@ impl Invoker {
             .await
         {
             Ok((_idp_env, auth_env)) => {
-                audit::log(
-                    &self.paths,
-                    &scope.audit_scope,
-                    "preflight-ok",
-                    &scope.auth.provider,
-                    "",
-                );
+                transaction.event("preflight-ok", &audit::detail(&scope.auth.provider, ""));
                 auth_env
             }
             Err(error) => {
-                audit::log(
-                    &self.paths,
-                    &scope.audit_scope,
-                    "preflight-failed",
-                    &scope.auth.provider,
-                    "",
-                );
+                transaction.event("preflight-failed", &audit::detail(&scope.auth.provider, ""));
                 return Err(error);
             }
         };
@@ -371,12 +352,12 @@ impl Invoker {
         }
 
         if !self.target_access_is_active(&provider, &scope)? {
-            audit::log(
-                &self.paths,
-                &scope.audit_scope,
+            transaction.event(
                 "target-access-lost",
-                scope.target.as_deref().unwrap_or("-"),
-                "after-authentication",
+                &audit::detail(
+                    scope.target.as_deref().unwrap_or("-"),
+                    "after-authentication",
+                ),
             );
             return Ok(target_access_denied_result(
                 &provider,
@@ -417,12 +398,9 @@ impl Invoker {
             )?)
         };
         let Some(running) = running else {
-            audit::log(
-                &self.paths,
-                &scope.audit_scope,
+            transaction.event(
                 "target-access-lost",
-                scope.target.as_deref().unwrap_or("-"),
-                "at-launch",
+                &audit::detail(scope.target.as_deref().unwrap_or("-"), "at-launch"),
             );
             return Ok(target_access_denied_result(
                 &provider,
@@ -431,13 +409,7 @@ impl Invoker {
             ));
         };
         let execution = running.wait().await?;
-        audit::log(
-            &self.paths,
-            &scope.audit_scope,
-            "ran",
-            &audit_rule,
-            &format!("exit={}", execution.exit_code),
-        );
+        transaction.event("ran", &format!("exit={}", execution.exit_code));
         Ok(invocation_result(
             &provider,
             &scope,
@@ -448,6 +420,7 @@ impl Invoker {
 
     async fn ensure_target_access(
         &self,
+        transaction: &audit::Transaction,
         provider: &Provider,
         scope: &InvocationScope,
         description: Option<&str>,
@@ -473,13 +446,7 @@ impl Invoker {
             return Ok(true);
         }
 
-        audit::log(
-            &self.paths,
-            &scope.audit_scope,
-            "target-access-requested",
-            target_name,
-            "",
-        );
+        transaction.event("target-access-requested", &audit::detail(target_name, ""));
         let requested_binding = target_access::human_binding(provider, target_name)?;
         let active_targets = snapshot
             .active
@@ -503,13 +470,7 @@ impl Invoker {
         .await?;
         let (minutes, mode, event) = match choice {
             TargetAccessChoice::Deny => {
-                audit::log(
-                    &self.paths,
-                    &scope.audit_scope,
-                    "target-access-denied",
-                    target_name,
-                    "",
-                );
+                transaction.event("target-access-denied", &audit::detail(target_name, ""));
                 return Ok(false);
             }
             TargetAccessChoice::Replace { minutes } => {
@@ -533,12 +494,12 @@ impl Invoker {
             },
         )? {
             ActivationOutcome::Applied(active) => {
-                audit::log(
-                    &self.paths,
-                    &scope.audit_scope,
+                transaction.event(
                     event,
-                    target_name,
-                    &format!("{minutes}min active={}", active.len()),
+                    &audit::detail(
+                        target_name,
+                        &format!("{minutes}min active={}", active.len()),
+                    ),
                 );
                 Ok(true)
             }
@@ -549,16 +510,16 @@ impl Invoker {
                     target_name,
                     audit::now_epoch(),
                 )?;
-                audit::log(
-                    &self.paths,
-                    &scope.audit_scope,
+                transaction.event(
                     "target-access-stale",
-                    target_name,
-                    if now_active {
-                        "already-active"
-                    } else {
-                        "retry-required"
-                    },
+                    &audit::detail(
+                        target_name,
+                        if now_active {
+                            "already-active"
+                        } else {
+                            "retry-required"
+                        },
+                    ),
                 );
                 Ok(now_active)
             }
@@ -585,12 +546,12 @@ impl Invoker {
     #[allow(clippy::too_many_arguments)]
     async fn resolve_unresolved(
         &self,
+        transaction: &audit::Transaction,
         ignore: &IgnoreArgs,
         scope: &InvocationScope,
         policy: &rules::Rules,
         args: &[String],
         minimum: usize,
-        audit_rule: &str,
         description: Option<&str>,
     ) -> Result<PolicyDecision> {
         let audit_scope = &scope.audit_scope;
@@ -598,25 +559,13 @@ impl Invoker {
         let now = audit::now_epoch();
         let loaded = grants::load_active(grants_path, now);
         if loaded.legacy_ignored {
-            audit::log(
-                &self.paths,
-                audit_scope,
-                "legacy-grants-ignored",
-                audit_rule,
-                "reapproval-required",
-            );
+            transaction.event("legacy-grants-ignored", "reapproval-required");
         }
         if loaded.invalid_ignored {
-            audit::log(
-                &self.paths,
-                audit_scope,
-                "invalid-grants-ignored",
-                audit_rule,
-                "reapproval-required",
-            );
+            transaction.event("invalid-grants-ignored", "reapproval-required");
         }
         if let Some(evidence) = grants::matching_grant(&loaded.active, args, now) {
-            audit::log(&self.paths, audit_scope, "allowed-by-grant", audit_rule, "");
+            transaction.event("allowed-by-grant", &evidence.reference());
             return Ok(PolicyDecision {
                 result: DecisionResult::Allow,
                 source: "grant".into(),
@@ -640,8 +589,19 @@ impl Invoker {
         )
         .await?;
         match choice {
+            // Headless, nobody was asked: the MCP answer keeps calling it a
+            // human deny, but the record must not claim a human said no.
+            AccessChoice::Deny if control::gui_disabled() => {
+                transaction.event("denied-headless", "TORII_NO_GUI is set; no window opened");
+                transaction.reword_source("headless-deny");
+                Ok(PolicyDecision {
+                    result: DecisionResult::Deny,
+                    source: "human-deny".into(),
+                    rule: None,
+                })
+            }
             AccessChoice::Deny => {
-                audit::log(&self.paths, audit_scope, "denied-interface", audit_rule, "");
+                transaction.event("denied-interface", "");
                 Ok(PolicyDecision {
                     result: DecisionResult::Deny,
                     source: "human-deny".into(),
@@ -649,7 +609,7 @@ impl Invoker {
                 })
             }
             AccessChoice::AllowOnce => {
-                audit::log(&self.paths, audit_scope, "override-once", audit_rule, "");
+                transaction.event("override-once", "");
                 Ok(PolicyDecision {
                     result: DecisionResult::Allow,
                     source: "human-once".into(),
@@ -658,13 +618,7 @@ impl Invoker {
             }
             AccessChoice::AllowFor { seconds, selection } => {
                 let Some(matcher) = grants::GrantMatcher::from_selection(args, selection) else {
-                    audit::log(
-                        &self.paths,
-                        audit_scope,
-                        "denied-interface",
-                        audit_rule,
-                        "invalid-grant-selection",
-                    );
+                    transaction.event("denied-interface", "invalid-grant-selection");
                     return Ok(PolicyDecision {
                         result: DecisionResult::Deny,
                         source: "human-deny".into(),
@@ -672,12 +626,9 @@ impl Invoker {
                     });
                 };
                 let evidence = grants::add(grants_path, &matcher, now + u64::from(seconds), now)?;
-                audit::log(
-                    &self.paths,
-                    audit_scope,
+                transaction.event(
                     "override-timed",
-                    audit_rule,
-                    &audit_grant_duration(seconds),
+                    &audit::detail(&audit_grant_duration(seconds), &evidence.reference()),
                 );
                 Ok(PolicyDecision {
                     result: DecisionResult::Allow,
@@ -705,16 +656,13 @@ impl Invoker {
                 };
                 match written {
                     Ok(rule) => {
-                        audit::log(
-                            &self.paths,
-                            audit_scope,
+                        transaction.event(
                             if allowing {
                                 "policy-accept-added"
                             } else {
                                 "policy-deny-added"
                             },
-                            audit_rule,
-                            &audit_rule_shape(scope, &prefix),
+                            &audit::detail(&rule, written_policy(scope)),
                         );
                         Ok(PolicyDecision {
                             result: if allowing {
@@ -735,13 +683,7 @@ impl Invoker {
                     // means deny — and the failure is loud in audit and on stderr,
                     // never swallowed into a policy the human believes was changed.
                     Err(error) => {
-                        audit::log(
-                            &self.paths,
-                            audit_scope,
-                            "policy-write-failed",
-                            audit_rule,
-                            &error.to_string(),
-                        );
+                        transaction.event("policy-write-failed", &error.to_string());
                         eprintln!(
                             "torii: a decisão permanente não foi gravada: {error}. Esta chamada seguiu apenas o gesto ({}).",
                             if allowing { "permitida uma vez" } else { "negada" }
@@ -860,19 +802,13 @@ fn permanent_options(
     }
 }
 
-/// Audit detail for a policy write: the shape of the rule, never the rule itself.
-/// The call reference already carries the first two tokens and the invariant is
-/// that the full argv is not logged.
-fn audit_rule_shape(scope: &InvocationScope, normalized: &[String]) -> String {
-    format!(
-        "{} tokens, {}",
-        normalized.len(),
-        if scope.target_rules.is_some() {
-            "target-policy"
-        } else {
-            "shared-policy"
-        }
-    )
+/// Which policy a permanent decision was written to, for the audit record.
+fn written_policy(scope: &InvocationScope) -> &'static str {
+    if scope.target_rules.is_some() {
+        "target-policy"
+    } else {
+        "shared-policy"
+    }
 }
 
 /// Whole minutes keep the historical `2min` shape; an alignment with an older
@@ -978,6 +914,35 @@ fn resolve_scope(
             profile: identity.profile.clone(),
         },
     })
+}
+
+/// How the audit record of a call ends: its verdict and how it was reached, what
+/// ran, or the error that stopped it.
+fn closing(result: &Result<InvocationResult>) -> audit::Closing<'_> {
+    match result {
+        Ok(result) => audit::Closing {
+            outcome: match result.decision.result {
+                DecisionResult::Allow => audit::record::Outcome::Allowed,
+                DecisionResult::Deny => audit::record::Outcome::Denied,
+            },
+            source: Some(&result.decision.source),
+            rule: result.decision.rule.as_deref(),
+            error: None,
+            execution: result.execution.as_ref().map(|execution| audit::Execution {
+                exit_code: execution.exit_code,
+                stdout: &execution.stdout,
+                stderr: &execution.stderr,
+                truncated: execution.truncated,
+            }),
+        },
+        Err(error) => audit::Closing {
+            outcome: audit::record::Outcome::Error,
+            source: None,
+            rule: None,
+            error: Some(error.to_string()),
+            execution: None,
+        },
+    }
 }
 
 fn invocation_result(

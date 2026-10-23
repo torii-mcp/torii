@@ -29,7 +29,7 @@ O humano continua usando `aws`, `kubectl`, `az` ou `gcloud` diretamente. O agent
 - credenciais e `.env` carregados somente depois da autorização;
 - ambiente aplicado exclusivamente ao processo filho;
 - captura de stdout/stderr/exit code com limite explícito;
-- auditoria central sem credenciais e sem lista completa de argumentos;
+- auditoria de toda chamada num SQLite cifrado com chave presa à máquina, com `torii log tail --follow`, busca, detalhe e exportação; credenciais nunca entram;
 - migração automática e não destrutiva de `~/.config/.awsgate` para o provider AWS quando a configuração padrão do Torii ainda não existe;
 - control plane humano para instalar, pesquisar, configurar e atualizar providers sem expor essas ações ao MCP;
 

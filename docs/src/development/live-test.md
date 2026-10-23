@@ -12,7 +12,7 @@ O catálogo precisa ser aprovado antes da primeira execução oficial. Uma execu
 4. O `rules.yaml` começa vazio e recebe somente as regras indispensáveis para aquele caso.
 5. Antes de executar, o agente mostra no chat o conteúdo integral de cada arquivo de regras que será usado e aguarda aprovação explícita do operador.
 6. Depois da aprovação, o agente informa os tokens da invocação e a ação humana exata: **Negar**, ou escolher **Temporariamente**, revisar/restaurar a sugestão estrutural ou selecionar `Exact`, definir a duração, marcar a confirmação de revisão e clicar **Permitir**.
-7. O agente confere resposta MCP, arquivos locais permitidos e eventos sanitizados de `torii.log`.
+7. O agente confere resposta MCP, arquivos locais permitidos e o registro da chamada em `torii log show`.
 8. Credenciais, conteúdo de `auth/credentials.env`, clipboard e stdout/stderr completos não entram na evidência.
 9. Depois de registrar a evidência, o agente remove somente a raiz daquele caso, após validar que o caminho continua dentro do diretório temporário e possui o prefixo esperado.
 10. Casos com múltiplas invocações preservam a mesma raiz até terminar todas as repetições. Isso se aplica a `allow once`, grant temporário, expiração, reautenticação transacional, leases e isolamento entre targets.
@@ -194,7 +194,7 @@ Critérios:
 - `lab` continua anunciado sem lease ativo; consulta de schema não abre GUI nem cria lease;
 - nenhum context real aparece no schema;
 - nenhuma operação de provider ou GUI ocorre;
-- `torii.log` permanece ausente ou sem evento de invocação.
+- `torii log tail` não mostra registro da chamada.
 
 ## Casos de autenticação AWS
 

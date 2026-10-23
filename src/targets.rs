@@ -298,7 +298,7 @@ pub fn activate(
         minutes,
         mode,
     )?;
-    audit::log(
+    audit::record(
         paths,
         &provider.config.name,
         if add {
@@ -306,8 +306,7 @@ pub fn activate(
         } else {
             "target-access-replaced"
         },
-        name,
-        &format!("{minutes}min active={}", active.len()),
+        &audit::detail(name, &format!("{minutes}min active={}", active.len())),
     );
     Ok(active)
 }
@@ -319,12 +318,11 @@ pub fn clear_authorizations(paths: &ConfigPaths, tool: &str) -> Result<()> {
         &provider.paths.target_authorizations(),
         &provider.paths.target_authorizations_lock(),
     )?;
-    audit::log(
+    audit::record(
         paths,
         &provider.config.name,
         "target-access-cleared",
-        "-",
-        "all",
+        &audit::detail("-", "all"),
     );
     Ok(())
 }
@@ -421,12 +419,11 @@ pub fn remove(paths: &ConfigPaths, tool: &str, name: &str, force: bool) -> Resul
         name,
         audit::now_epoch(),
     )?;
-    audit::log(
+    audit::record(
         paths,
         &provider.config.name,
         "target-access-revoked",
-        name,
-        "target-removed",
+        &audit::detail(name, "target-removed"),
     );
     std::fs::remove_dir_all(target.paths.base()).map_err(|source| Error::Write {
         path: target.paths.base().to_path_buf(),
@@ -498,12 +495,11 @@ pub fn rename(paths: &ConfigPaths, tool: &str, name: &str, new_name: &str) -> Re
         name,
         audit::now_epoch(),
     )?;
-    audit::log(
+    audit::record(
         paths,
         &provider.config.name,
         "target-access-revoked",
-        name,
-        "target-renamed",
+        &audit::detail(name, "target-renamed"),
     );
     std::fs::rename(target.paths.base(), destination.base()).map_err(|source| Error::Write {
         path: destination.base().to_path_buf(),
@@ -516,12 +512,11 @@ pub fn rename(paths: &ConfigPaths, tool: &str, name: &str, new_name: &str) -> Re
         let _ = std::fs::rename(destination.base(), target.paths.base());
         return Err(error);
     }
-    audit::log(
+    audit::record(
         paths,
         &provider.config.name,
         "target-renamed",
-        name,
-        new_name,
+        &audit::detail(name, new_name),
     );
     Ok(())
 }

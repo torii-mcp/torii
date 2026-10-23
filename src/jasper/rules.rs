@@ -3,7 +3,7 @@ use regex::{Regex, RegexBuilder};
 use serde::Deserialize;
 use std::path::Path;
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct Rules {
     #[serde(default)]
     pub version: String,

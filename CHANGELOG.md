@@ -8,6 +8,22 @@ Todas as mudanças relevantes deste projeto são registradas aqui. O formato seg
 
 ### Adicionado
 
+- Auditoria de verdade: toda chamada de agente vira um registro com provider, target, o argv
+  completo, o motivo do agente, o veredicto, **como** foi decidido (regra, grant, aprovação uma
+  vez, por tempo ou permanente, deny, negação na janela ou em headless), cada passo com horário,
+  exit code e a saída compactada. Comandos humanos que mudam estado (leases, `reauth`, edição de
+  política com as regras que mudaram) também entram. Credenciais, `.env` e clipboard nunca entram.
+- O log é um banco SQLite3 Multiple Ciphers, cifrado por inteiro com ChaCha20-Poly1305, com uma
+  chave guardada no cofre do sistema: Gerenciador de Credenciais (DPAPI) no Windows, Keychain no
+  macOS, Secret Service no Linux, ou um arquivo `600` com aviso quando não há cofre. Uma cópia do
+  disco não lê nem as datas. Ele entra por uma cópia do `libsqlite3-sys` em `vendor/`, sem
+  OpenSSL e sem DLL: medido contra o SQLCipher nos três sistemas, busca 3 a 4 vezes mais rápido
+  que cifrar linha a linha e compila em um décimo do tempo do SQLCipher no Windows.
+- `torii log tail [-n] [--follow]`, `search` (provider, target, veredicto, janela de tempo,
+  texto), `show <id> [--output]`, `export --format json|md` e `prune [dias]`.
+- Preferências `torii config log-retention` (90 dias), `log-tail` (20 registros) e `log-output`
+  (`full`); todo servidor aplica a retenção quando inicia.
+
 - Provider `helm` com o modo de targeting `helm_kube_context`: o mesmo binding do
   `kubectl_context` (um context do kubeconfig autenticado por um provider de identidade), mas
   injetando `--kube-context` e bloqueando as flags de identidade do Helm (`--kubeconfig`,
@@ -64,6 +80,9 @@ Todas as mudanças relevantes deste projeto são registradas aqui. O formato seg
 ### Alterado
 
 - `torii config-dir` virou `torii config dir show`.
+- O `torii.log` em texto deixou de ser escrito; o histórico passa a ficar em `audit.db`.
+- Uma chamada negada por falta de janela (`TORII_NO_GUI`) continua respondendo `human-deny` ao
+  agente, mas o registro diz que ninguém foi perguntado.
 - Uma linha de comando que o CLI não reconhece mostra o uso do comando mais próximo, em vez do
   help geral sob o prefixo `invalid MCP tool arguments`. `torii target activate kubectl` sem o
   nome mostra a sintaxe de `target activate`.

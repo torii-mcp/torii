@@ -1,5 +1,6 @@
 pub mod appearance;
 pub mod env_file;
+pub mod logging;
 pub mod paths;
 pub mod settings;
 

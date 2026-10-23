@@ -3,3 +3,6 @@ default_grant_minutes: 2
 default_target_minutes: 15
 theme: dark
 folded_bar_color: rosa-antigo
+log_retention_days: 90
+log_tail_lines: 20
+log_output: full

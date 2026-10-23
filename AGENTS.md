@@ -32,7 +32,7 @@ O repositório irmão `../awsgate` é somente referência. Nunca edite, formate,
 7. Nunca monte linha de shell para encaminhar providers (`bash -c`, `sh -c`, `cmd /c`, PowerShell). No Windows, um `command` que resolve para wrapper `.bat`/`.cmd` é carregado pelo `cmd.exe` pelo próprio sistema; os argumentos continuam seguindo como vetor até `Command::args`, e um argumento que a citação de batch não consiga expressar precisa falhar o launch em vez de chegar ambíguo.
 8. Política é avaliada antes de ler `.env`, credenciais ou cache de sessão.
 9. Credenciais são aplicadas somente ao processo filho; nunca use `std::env::set_var` para sessão.
-10. Não registre credenciais, clipboard, stdout/stderr completos ou a lista completa de argumentos.
+10. Não registre credenciais, valores de `.env` ou clipboard em lugar nenhum. Argumentos, motivo do agente e saída de uma chamada só entram na auditoria, e cifrados com a chave da máquina; nunca em stderr, mensagem de erro de log ou arquivo em texto.
 11. Reautenticação só substitui a sessão anterior após validar a candidata.
 12. Uma única renovação por provider simples ou target pode acontecer por vez.
 13. Stdout do processo servidor pertence exclusivamente ao transporte MCP. Diagnósticos vão para stderr ou auditoria.
@@ -51,7 +51,10 @@ O repositório irmão `../awsgate` é somente referência. Nunca edite, formate,
 - `src/runtime/`: resolução do executável, execução sem shell e limite de saída.
 - `src/control/`: interface humana de aprovação e autenticação.
 - `src/config/`: paths, settings e arquivos de ambiente.
-- `src/audit.rs`: eventos sanitizados e best-effort.
+- `src/audit/`: auditoria em SQLite3 Multiple Ciphers, cifrada por inteiro (registro, banco, busca e chave no cofre do sistema).
+- `src/log_cli/`: `torii log` (tail, search, show, export, prune).
+- `src/config_cli/`: `torii config` (aparência e preferências de log).
+- `vendor/libsqlite3-sys/`: `libsqlite3-sys` compilando SQLite3 Multiple Ciphers; mudanças marcadas `Torii:` e procedimento de atualização em `vendor/README.md`.
 - `examples/`: fixtures de pacotes canônicos usadas em testes e no desenvolvimento do catálogo separado.
 - `docs/`: documentação oficial em mdBook.
 

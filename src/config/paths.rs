@@ -29,8 +29,17 @@ impl ConfigPaths {
     pub fn settings(&self) -> PathBuf {
         self.base.join("settings.yaml")
     }
-    pub fn log(&self) -> PathBuf {
-        self.base.join("torii.log")
+    /// The sealed audit database.
+    pub fn audit_db(&self) -> PathBuf {
+        self.base.join("audit.db")
+    }
+    /// The audit key, only where no credential store holds it.
+    pub fn audit_key_file(&self) -> PathBuf {
+        self.base.join("audit.key")
+    }
+    /// Serializes the creation of the audit key between Torii processes.
+    pub fn audit_lock(&self) -> PathBuf {
+        self.base.join("audit.lock")
     }
     pub fn provider(&self, name: &str) -> ProviderPaths {
         ProviderPaths::new(self.providers().join(name))

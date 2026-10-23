@@ -19,6 +19,10 @@ const NEEDS_MORE: &[&[&str]] = &[
     &["config", "theme"],
     &["config", "folded-bar-color"],
     &["config", "fbc"],
+    &["config", "log-retention"],
+    &["config", "log-tail"],
+    &["config", "log-output"],
+    &["log"],
 ];
 
 /// The help the command line asks for, if it asks for one.
@@ -53,7 +57,7 @@ pub fn nearest(words: &[&str]) -> &'static str {
 
 fn text(command: &[&str]) -> Option<&'static str> {
     match command {
-        [] => Some("Torii is a controlled MCP execution boundary for infrastructure agents.\n\nUsage:\n  torii                         Start the MCP stdio server\n  torii <command> [arguments]   Run a human control-plane command\n\nCommands:\n  init                          Create the configuration root\n  reauth <tool> [target]        Renew managed authentication\n  provider <command>            Install and manage provider packages\n  policy <command>              Show or edit a provider or target policy\n  self upgrade [--check]         Upgrade the Torii binary itself\n  target <command>              Manage aliases for target-aware providers\n  agent <command>               Configure an agent integration and optional hook\n  config <command>              Show or change preferences such as the theme\n  --version, -V                 Print the Torii version\n\nHelp:\n  torii --help\n  torii <command> --help\n  torii <command> help\n  torii help <command>\n\n`reauth` is a human-only control-plane command. An allowed MCP call prompts for managed authentication automatically when its session is unavailable."),
+        [] => Some("Torii is a controlled MCP execution boundary for infrastructure agents.\n\nUsage:\n  torii                         Start the MCP stdio server\n  torii <command> [arguments]   Run a human control-plane command\n\nCommands:\n  init                          Create the configuration root\n  reauth <tool> [target]        Renew managed authentication\n  provider <command>            Install and manage provider packages\n  policy <command>              Show or edit a provider or target policy\n  self upgrade [--check]         Upgrade the Torii binary itself\n  target <command>              Manage aliases for target-aware providers\n  agent <command>               Configure an agent integration and optional hook\n  config <command>              Show or change preferences such as the theme\n  log <command>                 Follow, search and export the audit log\n  --version, -V                 Print the Torii version\n\nHelp:\n  torii --help\n  torii <command> --help\n  torii <command> help\n  torii help <command>\n\n`reauth` is a human-only control-plane command. An allowed MCP call prompts for managed authentication automatically when its session is unavailable."),
         ["reauth"] => Some("Usage:\n  torii reauth <provider-tool> [target]\n\nForces managed authentication and validates the candidate session before replacing the current one. Use the target argument only for target-aware tools, for example `torii reauth kubectl mpce_dev`. Providers using `inherited` authentication have no renewable material managed by Torii. An aws_profile target must be authenticated by a human through its configured AWS CLI profile instead; this command does not switch or renew that profile. This command is for a human and is never exposed through MCP."),
         ["provider"] => Some("Usage:\n  torii provider <command>\n\nCommands:\n  list                         List installed providers\n  search [query]               Search the configured catalog\n  install <source>             Install a provider package\n  setup <provider> <setup>     Apply a setup to an empty policy (alias: apply)\n  upgrade <provider>            Upgrade package-managed files\n\nRun `torii provider <command> --help` for the command syntax."),
         ["provider", "list"] => Some("Usage:\n  torii provider list\n\nLists local provider tools, logical names, executables, package versions, and sources."),
@@ -85,7 +89,7 @@ Providers, policy, targets, grants and credentials are untouched. Restart any ag
         ["agent", "status" | "check"] => Some("Usage:\n  torii agent status <agent>\n  torii agent check <agent>\n\nShows whether the MCP integration and hook are installed and managed by this Torii configuration. Agents without a pre-execution hook report the hook as unsupported."),
         ["agent", "uninstall"] => Some("Usage:\n  torii agent uninstall <agent> [--hook]\n\nRemoves the managed integration, or only its hook with `--hook`."),
         ["init"] => Some("Usage:\n  torii init\n\nCreates the configuration root and default settings without installing providers."),
-        ["config"] => Some("Usage:\n  torii config <command>\n\nCommands:\n  list                      Show each preference, its value and its default\n  dir show                  Print the configuration directory\n  theme <verb>              Theme of the prompt windows: list, set, reset, test\n  folded-bar-color <verb>   Folded bar color, alias fbc: list, set, reset, test\n\nPreferences live in settings.yaml. Prompt windows read them when they open, so a change needs no restart."),
+        ["config"] => Some("Usage:\n  torii config <command>\n\nCommands:\n  list                      Show each preference, its value and its default\n  dir show                  Print the configuration directory\n  theme <verb>              Theme of the prompt windows: list, set, reset, test\n  folded-bar-color <verb>   Folded bar color, alias fbc: list, set, reset, test\n  log-retention <verb>      Days the audit log keeps records: list, set, reset\n  log-tail <verb>           Records `torii log tail` shows: list, set, reset\n  log-output <verb>         Whether a call's output is kept: list, set, reset\n\nPreferences live in settings.yaml. Prompt windows read them when they open, so a change needs no restart."),
         ["config", "list"] => Some("Usage:\n  torii config list\n\nShows each preference, its current value and its default. `ls` also works."),
         ["config", "dir"] | ["config", "dir", "show"] => Some("Usage:\n  torii config dir show\n\nPrints the active Torii configuration directory."),
         ["config", "theme"] => Some("Usage:\n  torii config theme list\n  torii config theme set <theme>\n  torii config theme reset\n  torii config theme test [<theme>]\n\nTheme of the prompt windows: dark (the default), light or nord. `list` marks the default and the one in use, `set` saves a theme, `reset` restores dark and `test` opens a sample authorization window in the given or the saved theme."),
@@ -98,6 +102,21 @@ Providers, policy, targets, grants and credentials are untouched. Restart any ag
         ["config", "folded-bar-color" | "fbc", "set"] => Some("Usage:\n  torii config folded-bar-color set <color>\n\nSaves the folded bar color: a name from `list`, `theme` or #rrggbb. In PowerShell, quote a #rrggbb value: `#` starts a comment."),
         ["config", "folded-bar-color" | "fbc", "reset"] => Some("Usage:\n  torii config folded-bar-color reset\n\nRestores the default folded bar color, rosa-antigo."),
         ["config", "folded-bar-color" | "fbc", "test"] => Some("Usage:\n  torii config folded-bar-color test [<color>]\n\nOpens a sample authorization window in the saved theme with <color>, or the saved color, on its folded bar, without saving anything. Fold the window to see the color."),
+        ["log"] => Some("Usage:\n  torii log <command>\n\nCommands:\n  tail [-n <count>] [--follow]          Latest records, one line each; --follow keeps watching\n  search [filters] [-n <count>]         Newest records that match the filters\n  show <id> [--output]                  Everything about one record, its output with --output\n  export [filters] [--format json|md] [--file <path>] [--with-output]\n  prune [days]                          Drop records older than days, or than the retention\n\nEvery agent call is recorded: when, provider, target, the call, the agent's reason, the verdict and how it was reached, the steps, and what it returned. Human commands that change state are recorded too. The log is a SQLite database with every row sealed by a key kept in this machine's credential store, so a copied disk does not read without it. Credentials and clipboard contents are never recorded."),
+        ["log", "tail"] => Some("Usage:\n  torii log tail [-n <count>] [--follow]\n\nPrints the latest records, oldest first, one line each: time, record number, scope, verdict, how it was reached, exit code, duration and the call. Without -n it shows `torii config log-tail` records (20 by default). --follow (-f) keeps watching: a call prints when it arrives, so one waiting for your answer shows up, and again when it ends. Stop with Ctrl+C."),
+        ["log", "search"] => Some("Usage:\n  torii log search [filters] [-n <count>]\n\nFilters:\n  --provider <tool>       --target <name>\n  --allowed  --denied  --errors  --running   (any of them)\n  --agent    --human     agent calls or human commands only\n  --since <when>          --until <when>      30m, 2h, 7d, 2026-10-20, 2026-10-20T14:30\n  --text <words>          in the call, the agent's reason, the rule or the error\n\nPrints the newest matching records, up to -n or `torii config log-tail`. Filters combine; outcome flags add up."),
+        ["log", "show"] => Some("Usage:\n  torii log show <id> [--output]\n\nEverything about one record: times, provider, target, the call as sent, the agent's reason, the verdict, the rule or grant behind it, every step with its time, and the result. --output also prints the stdout and stderr the call returned, when `log-output` kept them."),
+        ["log", "export"] => Some("Usage:\n  torii log export [filters] [--format json|md] [--file <path>] [--with-output]\n\nFilters:\n  --provider <tool>       --target <name>\n  --allowed  --denied  --errors  --running   (any of them)\n  --agent    --human     agent calls or human commands only\n  --since <when>          --until <when>      30m, 2h, 7d, 2026-10-20, 2026-10-20T14:30\n  --text <words>          in the call, the agent's reason, the rule or the error\n\nWrites the matching records with their steps, oldest first, as JSON (the default) or Markdown, to <path> or to stdout. --with-output includes what each call returned. The export is plain text, not encrypted: keep it somewhere safe."),
+        ["log", "prune"] => Some("Usage:\n  torii log prune [days]\n\nKeeps only the last <days> days of records, or the retention from `torii config log-retention` (90 by default) without a number. Every MCP server also prunes by the retention when it starts."),
+        ["config", "log-retention"] | ["config", "log-retention", "list"] => Some("Usage:\n  torii config log-retention list\n  torii config log-retention set <days>\n  torii config log-retention reset\n\nDays the audit log keeps a record, from 1 to 3650; 90 by default. Every MCP server prunes by it when it starts, and `torii log prune` uses it without a number."),
+        ["config", "log-retention", "set"] => Some("Usage:\n  torii config log-retention set <days>\n\nSaves how many days the audit log keeps, from 1 to 3650."),
+        ["config", "log-retention", "reset"] => Some("Usage:\n  torii config log-retention reset\n\nRestores the default retention, 90 days."),
+        ["config", "log-tail"] | ["config", "log-tail", "list"] => Some("Usage:\n  torii config log-tail list\n  torii config log-tail set <count>\n  torii config log-tail reset\n\nHow many records `torii log tail` and `torii log search` show without -n; 20 by default."),
+        ["config", "log-tail", "set"] => Some("Usage:\n  torii config log-tail set <count>\n\nSaves how many records `torii log tail` shows by default, from 1 to 10000."),
+        ["config", "log-tail", "reset"] => Some("Usage:\n  torii config log-tail reset\n\nRestores the default, 20 records."),
+        ["config", "log-output"] | ["config", "log-output", "list"] => Some("Usage:\n  torii config log-output list\n  torii config log-output set full|none\n  torii config log-output reset\n\nWhether the audit record of a call keeps the stdout and stderr it returned: full (the default) keeps them compressed and sealed, none keeps only sizes and exit code."),
+        ["config", "log-output", "set"] => Some("Usage:\n  torii config log-output set full|none\n\nSaves whether audit records keep what a call returned. Running MCP servers apply it when they restart."),
+        ["config", "log-output", "reset"] => Some("Usage:\n  torii config log-output reset\n\nRestores the default, full."),
         _ => None,
     }
 }
@@ -158,6 +177,24 @@ mod tests {
         &["config", "fbc", "set"],
         &["config", "fbc", "reset"],
         &["config", "fbc", "test"],
+        &["config", "log-retention"],
+        &["config", "log-retention", "list"],
+        &["config", "log-retention", "set"],
+        &["config", "log-retention", "reset"],
+        &["config", "log-tail"],
+        &["config", "log-tail", "list"],
+        &["config", "log-tail", "set"],
+        &["config", "log-tail", "reset"],
+        &["config", "log-output"],
+        &["config", "log-output", "list"],
+        &["config", "log-output", "set"],
+        &["config", "log-output", "reset"],
+        &["log"],
+        &["log", "tail"],
+        &["log", "search"],
+        &["log", "show"],
+        &["log", "export"],
+        &["log", "prune"],
     ];
 
     fn ask(words: &[&str]) -> Option<&'static str> {

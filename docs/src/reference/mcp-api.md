@@ -56,7 +56,7 @@ Chamada:
 
 `description` é o motivo da chamada nas palavras do agente: qual projeto ela atende, o que ele quer descobrir ou mudar e, quando faz parte de um plano, qual passo é ("passo 1 de 10"). O schema e as instruções do servidor pedem que o agente sempre a preencha. Ela aparece no topo da janela de autorização da operação e da janela de lease de target, num quadro rotulado **Motivo informado pelo agente · não verificado**; sem ela, o quadro diz que o agente não informou o motivo.
 
-A descrição é contexto para o humano, nunca evidência: não participa de deny, accept, grant, lease ou regra permanente, e uma chamada resolvida pela política não abre janela só por tê-la. Antes de chegar à janela, quebras de linha, caracteres de controle e marcas de direção bidirecional viram espaço e espaços repetidos são colapsados, para que o texto não disfarce o que está sendo pedido. Texto em branco equivale a ausente; mais de 500 caracteres é erro de parâmetros. A descrição não vai para a auditoria nem para a resposta.
+A descrição é contexto para o humano, nunca evidência: não participa de deny, accept, grant, lease ou regra permanente, e uma chamada resolvida pela política não abre janela só por tê-la. Antes de chegar à janela, quebras de linha, caracteres de controle e marcas de direção bidirecional viram espaço e espaços repetidos são colapsados, para que o texto não disfarce o que está sendo pedido. Texto em branco equivale a ausente; mais de 500 caracteres é erro de parâmetros. A descrição fica no registro cifrado da auditoria e não volta na resposta.
 
 ## Provider target-aware
 

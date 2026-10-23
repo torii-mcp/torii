@@ -9,9 +9,12 @@ license = "AGPL-3.0-only"
 dirs = "5"
 eframe = "0.29"
 arboard = "3"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 flate2 = "1"
+getrandom = "0.2"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 regex = "1"
+rusqlite = { version = "0.32", features = ["bundled"] }
 rmcp = { version = "2.2.0", features = ["client", "server", "transport-child-process", "transport-io"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -24,5 +27,21 @@ tokio = { version = "1", features = ["macros", "process", "rt-multi-thread", "sy
 toml_edit = "0.25"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 
+# The audit key lives in the operating system's credential store: Credential
+# Manager (DPAPI) on Windows, Keychain on macOS, Secret Service on Linux.
+[target.'cfg(windows)'.dependencies]
+keyring = { version = "3", features = ["windows-native"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3", features = ["apple-native"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "3", features = ["async-secret-service", "async-io", "crypto-rust"] }
+
 [dev-dependencies]
 assert_matches = "1"
+
+# The audit log's SQLite is SQLite3 Multiple Ciphers, which encrypts the whole
+# file. See vendor/README.md.
+[patch.crates-io]
+libsqlite3-sys = { path = "vendor/libsqlite3-sys" }

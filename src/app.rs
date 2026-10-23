@@ -1,3 +1,4 @@
+use crate::audit;
 use crate::config::{env_file, settings, ConfigPaths};
 use crate::core::Invoker;
 use crate::error::{Error, Result};
@@ -46,10 +47,19 @@ async fn run_async(args: Vec<String>) -> Result<i32> {
                 )));
             }
             let settings = settings::load(&paths.settings())?;
+            // Records past the retention go when a server starts; the audit
+            // log never stops a server, so a failure only warns.
+            if let Err(reason) = audit::prune(&paths, settings.log_retention_days) {
+                eprintln!("torii: the audit log was not pruned: {reason}");
+            }
             crate::mcp::server::serve(Invoker::new(paths, settings, registry)).await?;
             Ok(0)
         }
         [command] if command == "init" => init(&paths),
+        [command, rest @ ..] if command == "log" => {
+            crate::log_cli::run(&paths, rest)?;
+            Ok(0)
+        }
         [command, rest @ ..] if command == "config" => {
             crate::config_cli::run(&paths, rest)?;
             Ok(0)
@@ -605,13 +615,13 @@ async fn reauth(paths: &ConfigPaths, tool: &str, target_name: Option<&String>) -
     let removed_owned = auth_provider.config.auth.removed_env.clone();
     let removed_env: Vec<&str> = removed_owned.iter().map(String::as_str).collect();
     session::ensure_valid(
-        paths,
         &auth_provider,
         &auth_paths,
         auth_lock.as_ref(),
         session::SessionScope {
             audit: &audit_scope,
             requested_for: provider.uses_targets().then_some(audit_scope.as_str()),
+            trail: audit::Trail::Control(paths),
         },
         session::SessionEnvironment {
             persistent_env: &persistent,

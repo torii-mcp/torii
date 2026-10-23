@@ -196,12 +196,15 @@ reauth, kill, instalação, edição de política ou ativação de target. Ver
 ## Ler a decisão e a auditoria
 
 A resposta traz `decision.result`, `decision.source` e, quando executou, `execution` com
-`exit_code`, `stdout`, `stderr` e `truncated`. O log fica em `<raiz>/torii.log`:
+`exit_code`, `stdout`, `stderr` e `truncated`. Toda chamada fica registrada, cifrada, em
+`<raiz>/audit.db`:
 
-```text
-epoch | escopo | evento | regra-curta | detalhe
-1784000000 | aws            | allowed-by-rules | ec2 describe-instances
-1784000003 | kubectl/dev    | ran              | get pods | exit=0
+```powershell
+torii log tail --follow               # acompanha ao vivo; Ctrl+C sai
+torii log search --denied --since 2h  # filtros: --provider --target --text --until …
+torii log show 128 --output           # tudo sobre um registro, com a saída
+torii log export --format md --file auditoria.md
+torii log prune 30                    # mantém só os últimos 30 dias
 ```
 
 | Evento | Leitura |
@@ -215,8 +218,8 @@ epoch | escopo | evento | regra-curta | detalhe
 | `identity-mismatch` | conta ativa diferente da esperada; comando não executou |
 | `session-*` | estado da sessão do escopo de credencial |
 
-Sem credenciais, clipboard ou saída completa. Escrita best-effort: é observabilidade local,
-não ledger de compliance. Ver [Auditoria](../reference/audit.md).
+Credenciais, `.env` e clipboard nunca entram. A chave fica no cofre do sistema (DPAPI no
+Windows), então uma cópia do disco não lê o log. Ver [Auditoria](../reference/audit.md).
 
 ## Aparência das janelas
 

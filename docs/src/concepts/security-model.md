@@ -11,7 +11,7 @@ O Torii reduz a superfície de execução disponível ao agente. Ele não transf
 5. **Credencial por processo.** Material coletado pelo Torii é sobreposto somente nos filhos de validação e execução.
 6. **Substituição após validação.** Reauth falho preserva a sessão anterior.
 7. **Concorrência serializada por escopo de autenticação.** Chamadas que herdam o mesmo provider compartilham seu lock; cada alias `aws_profile` possui um lock próprio.
-8. **Auditoria sanitizada.** Logs usam uma referência curta e não armazenam clipboard, credenciais ou saída completa.
+8. **Auditoria completa e cifrada.** Toda chamada é registrada inteira (argv, motivo do agente, veredicto, como foi decidido, passos e saída) num banco SQLite cifrado por inteiro (SQLite3 Multiple Ciphers, ChaCha20-Poly1305) com uma chave guardada no cofre do sistema operacional. Credenciais, valores de `.env` e clipboard nunca entram. Uma cópia do disco não lê o log; um processo do mesmo usuário na mesma máquina, sim.
 9. **Target sob controle humano.** O alias resolve para configuração local; flags de troca de context, identidade e endpoint são bloqueadas.
 10. **Política pertence ao operador.** Install cria rules vazio; setup é o único writer e upgrade nunca toca em rules ou estado operacional.
 11. **Lifecycle herdado pelo target.** Todo target indica um provider instalado. Somente depois de allow o Torii lê o ambiente e executa o lifecycle desse provider; o ambiente resultante é aplicado apenas ao processo filho alvo.
@@ -21,7 +21,7 @@ O Torii reduz a superfície de execução disponível ao agente. Ele não transf
 15. **Piso compartilhado de deny.** Em provider target-aware, os denies do `rules.yaml` compartilhado valem em todos os targets e não podem ser removidos pela política de um target; criar a política de um target nunca é caminho para sair de um deny da raiz. Accepts são o contrário: a política do target substitui os accepts compartilhados naquele alias.
 16. **Decisão permanente é gesto humano validado.** Uma regra só é acrescentada à política pela janela depois de um gesto humano de cinco segundos, e somente se a política resultante, compilada e avaliada sobre o argv daquele prefixo, produzir o veredicto pretendido. A janela devolve a fronteira, nunca a regra; o servidor a reconstrói, relê a política do disco e substitui o arquivo atomicamente. O agente não tem tool que edite política e nenhuma escrita acontece em headless.
 17. **Lease humano de target.** Um alias target-aware é configurado, mas começa inativo. Depois de avaliar o deny explícito — que encerra a chamada se compatível — e antes de grants, ambiente, sessão ou execução, o dispatcher exige um lease humano ainda válido para aquele binding.
-18. **Descrição do agente é só contexto.** O motivo que o agente envia em `description` aparece nas janelas como texto não verificado, depois de perder quebras de linha, caracteres de controle e marcas bidirecionais. Ele não altera nenhuma decisão e não é auditado.
+18. **Descrição do agente é só contexto.** O motivo que o agente envia em `description` aparece nas janelas como texto não verificado, depois de perder quebras de linha, caracteres de controle e marcas bidirecionais. Ele não altera nenhuma decisão; é registrado cifrado na auditoria, como contexto da chamada.
 
 ## Ordem crítica
 

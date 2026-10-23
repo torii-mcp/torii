@@ -1,0 +1,6 @@
+# Builds and tests run by cargo keep the audit key in a file under the
+# configuration root instead of the developer's credential store, so test runs
+# do not leave entries behind. An installed binary, run outside cargo, uses the
+# credential store. See src/audit/key.rs.
+[env]
+TORII_AUDIT_KEYSTORE = "file"

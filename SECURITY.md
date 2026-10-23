@@ -29,6 +29,8 @@ Uma quebra dos invariantes documentados em
 - uma chamada atravessar sem casar `accept`, grant ativo ou aprovação humana;
 - um `deny` explícito ser vencido por accept, grant ou aprovação;
 - o agente escolher target, context, profile ou conta fora dos aliases humanos;
+- a auditoria ser lida sem a chave da máquina, ou registrar argv, motivo ou saída fora do
+  banco cifrado;
 - credencial ou sessão vazar para o processo do Torii, para a auditoria, para o log ou
   para outro provider/target;
 - política ser avaliada depois da leitura de credenciais;

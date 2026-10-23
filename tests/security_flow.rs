@@ -8,6 +8,25 @@ use torii::target_access::{self, ActivationMode};
 
 static GUI_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
+/// Every step the audit log holds, oldest first, one `time | scope | event |
+/// detail` line each: the shape the old text log had, so assertions read the
+/// same over the sealed database.
+fn audit_text(paths: &ConfigPaths) -> String {
+    let ledger = torii::audit::Ledger::open(paths).unwrap();
+    let mut entries = ledger.all().unwrap();
+    entries.reverse();
+    entries
+        .iter()
+        .flat_map(|entry| ledger.events(entry.id).unwrap())
+        .map(|event| {
+            format!(
+                "{} | {} | {} | {}\n",
+                event.at, event.scope, event.name, event.detail
+            )
+        })
+        .collect()
+}
+
 fn fixture(rules: &str) -> (TempDir, ConfigPaths, ProviderRegistry) {
     let temp = TempDir::new().unwrap();
     let paths = ConfigPaths::new(temp.path().to_path_buf());
@@ -463,7 +482,7 @@ async fn denied_aws_profile_call_does_not_read_environment_or_check_identity() {
 
     assert_eq!(result.decision.result, DecisionResult::Deny);
     assert!(result.execution.is_none());
-    let audit = fs::read_to_string(paths.log()).unwrap();
+    let audit = audit_text(&paths);
     assert!(!audit.contains("aws-identity"));
     assert!(!audit.contains("session-ok"));
 }
@@ -499,7 +518,7 @@ async fn explicit_deny_reports_the_selected_target() {
         .unwrap();
     assert_eq!(result.target.as_deref(), Some("mpce_dev"));
     assert_eq!(result.decision.result, DecisionResult::Deny);
-    let audit = fs::read_to_string(paths.log()).unwrap();
+    let audit = audit_text(&paths);
     assert!(!audit.contains("target-access-requested"));
 }
 
@@ -536,7 +555,7 @@ async fn inactive_target_is_denied_before_environment_authentication_or_prefligh
     assert_eq!(result.decision.result, DecisionResult::Deny);
     assert_eq!(result.decision.source, "target-inactive");
     assert!(result.execution.is_none());
-    let audit = fs::read_to_string(paths.log()).unwrap();
+    let audit = audit_text(&paths);
     assert!(audit.contains("target-access-requested"));
     assert!(audit.contains("target-access-denied"));
     assert!(!audit.contains("preflight-provider"));
@@ -584,9 +603,7 @@ async fn a_target_policy_cannot_drop_a_shared_deny() {
     assert_eq!(result.decision.source, "explicit-deny");
     assert_eq!(result.decision.rule.as_deref(), Some("danger"));
     assert!(result.execution.is_none());
-    assert!(fs::read_to_string(paths.log())
-        .unwrap()
-        .contains("denied-explicit"));
+    assert!(audit_text(&paths).contains("denied-explicit"));
 }
 
 /// A contrapartida: accept não herda. Um target com política própria carrega só
@@ -648,7 +665,7 @@ async fn a_permanent_rule_resolves_the_next_call_by_policy() {
         error.to_string().contains("executable-that-must-not-run"),
         "{error}"
     );
-    let audit = fs::read_to_string(paths.log()).unwrap();
+    let audit = audit_text(&paths);
     assert!(audit.contains("allowed-by-rules | get services"), "{audit}");
     // O piso compartilhado continua no arquivo compartilhado, não copiado para cá.
     let written = fs::read_to_string(&target_rules).unwrap();
@@ -749,7 +766,7 @@ async fn target_runs_the_inherited_lifecycle_of_its_provider() {
         .unwrap_err();
 
     assert!(error.to_string().contains("executable-that-must-not-run"));
-    let audit = fs::read_to_string(paths.log()).unwrap();
+    let audit = audit_text(&paths);
     assert!(audit.contains(" | auth | session-unchecked | "));
     assert!(audit.contains("preflight-ok"));
 }
@@ -768,7 +785,7 @@ async fn explicit_deny_does_not_read_preflight_provider_environment() {
         .unwrap();
 
     assert_eq!(result.decision.result, DecisionResult::Deny);
-    let audit = fs::read_to_string(paths.log()).unwrap();
+    let audit = audit_text(&paths);
     assert!(!audit.contains("preflight-provider"));
 }
 
@@ -791,7 +808,7 @@ async fn allowed_target_stops_when_preflight_provider_fails() {
         .unwrap_err();
 
     assert!(error.to_string().contains("invalid env file"));
-    let audit = fs::read_to_string(paths.log()).unwrap();
+    let audit = audit_text(&paths);
     assert!(audit.contains("preflight-provider"));
     assert!(audit.contains("preflight-failed"));
     assert!(!audit.contains(" | ran | "));
@@ -815,7 +832,7 @@ async fn successful_preflight_runs_before_the_target_provider() {
         .unwrap_err();
 
     assert!(error.to_string().contains("executable-that-must-not-run"));
-    let audit = fs::read_to_string(paths.log()).unwrap();
+    let audit = audit_text(&paths);
     assert!(audit.contains(" | auth | session-ok | "));
     assert!(audit.contains("preflight-ok"));
     assert!(!audit.contains(" | ran | "));
@@ -868,8 +885,68 @@ async fn forbidden_argument_is_denied_before_spawn() {
     assert_eq!(result.decision.result, DecisionResult::Deny);
     assert_eq!(result.decision.source, "forbidden-arg");
     assert!(result.execution.is_none());
-    let audit = fs::read_to_string(paths.log()).unwrap();
+    let audit = audit_text(&paths);
     assert!(audit.contains("denied-forbidden-arg"));
+}
+
+/// The audit record keeps the whole call, as the human needs it to know what
+/// was attempted: every argument, the agent's reason, the verdict and the rule.
+#[tokio::test]
+async fn a_denied_call_is_recorded_whole() {
+    let (_temp, paths, registry) = fixture("version: '1.0'\ndeny: ['danger']\naccept: []\n");
+    Invoker::new(paths.clone(), Settings::default(), registry)
+        .invoke(
+            "test",
+            None,
+            &["danger".into(), "--force".into(), "all".into()],
+            Some("limpar o ambiente de teste"),
+        )
+        .await
+        .unwrap();
+    let ledger = torii::audit::Ledger::open(&paths).unwrap();
+    let entries = ledger.all().unwrap();
+    assert_eq!(entries.len(), 1);
+    let record = &entries[0].record;
+    assert_eq!(record.args, ["danger", "--force", "all"]);
+    assert_eq!(
+        record.description.as_deref(),
+        Some("limpar o ambiente de teste")
+    );
+    assert_eq!(record.outcome, torii::audit::record::Outcome::Denied);
+    assert_eq!(record.source.as_deref(), Some("explicit-deny"));
+    assert_eq!(record.rule.as_deref(), Some("danger"));
+    assert!(record.finished_at.is_some());
+}
+
+/// Values from the provider's environment reach the child process and never
+/// the audit log, even on a call that loads them.
+#[tokio::test]
+async fn environment_values_never_reach_the_audit_log() {
+    let (_temp, paths, registry) = query_fixture("version: '1.0'\ndeny: []\naccept: ['sql -q']\n");
+    fs::write(
+        paths.provider("query").env(),
+        "API_TOKEN=super-secret-token-123\n",
+    )
+    .unwrap();
+    let error = Invoker::new(paths.clone(), Settings::default(), registry)
+        .invoke("query", None, &["sql".into(), "-q".into()], None)
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("executable-that-must-not-run"));
+    let ledger = torii::audit::Ledger::open(&paths).unwrap();
+    let entries = ledger.all().unwrap();
+    let record = &entries[0].record;
+    assert_eq!(record.outcome, torii::audit::record::Outcome::Error);
+    assert!(record
+        .error
+        .as_deref()
+        .unwrap()
+        .contains("executable-that-must-not-run"));
+    let everything = format!("{:?}{}", record, audit_text(&paths));
+    assert!(
+        !everything.contains("super-secret-token-123"),
+        "{everything}"
+    );
 }
 
 #[tokio::test]
@@ -961,7 +1038,7 @@ environment: { file: .env }
         .await
         .unwrap_err();
 
-    let audit = fs::read_to_string(paths.log()).unwrap();
+    let audit = audit_text(&paths);
     assert!(audit.contains("session-unchecked"));
     assert!(!audit.contains("session-ok"));
 }

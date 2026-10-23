@@ -5,7 +5,8 @@ O diretório padrão é `~/.config/torii`. `TORII_CONFIG_DIR` substitui a raiz i
 ```text
 ~/.config/torii/
 ├── settings.yaml
-├── torii.log
+├── audit.db
+├── audit.lock
 └── providers/
     ├── aws/
     │   ├── provider.yaml
@@ -59,9 +60,14 @@ default_grant_minutes: 2
 default_target_minutes: 15
 theme: dark
 folded_bar_color: rosa-antigo
+log_retention_days: 90
+log_tail_lines: 20
+log_output: full
 ```
 
 `max_output_bytes` limita o conteúdo combinado devolvido; `default_grant_minutes` define o valor inicial da aprovação temporária de uma operação; `default_target_minutes` define o valor inicial do lease de um alias target-aware. Leases aceitam de 1 a 1.440 minutos.
+
+`log_retention_days` (1 a 3650, padrão 90), `log_tail_lines` (padrão 20) e `log_output` (`full` ou `none`) são as preferências da [auditoria](audit.md), trocadas por `torii config log-retention`, `log-tail` e `log-output`.
 
 `theme` (`dark`, `light` ou `nord`) e `folded_bar_color` (um nome da lista, `theme` ou `#rrggbb`) são as preferências das janelas, trocadas pelo `torii config` e lidas a cada janela aberta. Ver [Personalizar as janelas](../guides/appearance.md).
 
@@ -72,6 +78,8 @@ folded_bar_color: rosa-antigo
 - `identities/<scope>/.session-cache`: epoch da última validação da sessão daquele escopo;
 - `identities/<scope>/.identity-cache`: epoch e identidade confirmada pelo probe `auth.identity`;
 - `identities/<scope>/auth/credentials.env`: material sensível;
-- `torii.log`: auditoria append-only best-effort.
+- `audit.db`: auditoria em SQLite, o arquivo inteiro cifrado com a chave guardada no cofre do sistema;
+- `audit.lock`: serializa a criação da chave de auditoria entre processos;
+- `audit.key`: a chave de auditoria, só quando não há cofre do sistema (permissão `600`). Ver [Auditoria](audit.md).
 
 Restrinja acesso ao diretório com permissões do sistema operacional e não o sincronize em repositórios ou telemetria.

@@ -20,6 +20,14 @@ torii config theme --help
 | `torii init` | cria raiz e settings, sem instalar providers |
 | `torii config list` | mostra cada preferência, o valor atual e o padrão |
 | `torii config dir show` | imprime o diretório de configuração |
+| `torii config log-retention list\|set <dias>\|reset` | dias que a auditoria guarda; padrão 90 |
+| `torii config log-tail list\|set <n>\|reset` | registros que `torii log tail` mostra sem `-n`; padrão 20 |
+| `torii config log-output list\|set full\|none\|reset` | guardar ou não a saída das chamadas; padrão `full` |
+| `torii log tail [-n <n>] [--follow]` | últimos registros da auditoria; `--follow` acompanha ao vivo |
+| `torii log search [filtros] [-n <n>]` | registros que casam os filtros, os mais novos |
+| `torii log show <id> [--output]` | tudo sobre um registro, e a saída com `--output` |
+| `torii log export [filtros] [--format json\|md] [--file <caminho>] [--with-output]` | exporta em texto aberto |
+| `torii log prune [dias]` | mantém só os últimos `dias`, ou a retenção |
 | `torii config theme list` | lista os temas e marca o padrão e o que está em uso |
 | `torii config theme set <tema>` | grava `dark` (padrão), `light` ou `nord` |
 | `torii config theme reset` | volta para `dark` |
