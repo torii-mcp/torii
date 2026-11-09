@@ -12,7 +12,9 @@ use crate::providers::auth::session;
 use crate::providers::config::IgnoreArgs;
 use crate::providers::{AuthStrategy, Provider, ProviderRegistry, TargetMode};
 use crate::runtime::exec::{self, ExecutionResult};
-use crate::target_access::{self, ActivationMode, ActivationOutcome, GuardedActivation};
+use crate::target_access::{
+    self, ActivationMode, ActivationOutcome, GuardedActivation, LeaseState,
+};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct InvocationResult {
@@ -275,11 +277,16 @@ impl Invoker {
             return Ok(invocation_result(&provider, &scope, decision, None));
         }
 
-        if !self.target_access_is_active(&provider, &scope)? {
-            transaction.event(
-                "target-access-lost",
-                &audit::detail(scope.target.as_deref().unwrap_or("-"), "before-environment"),
-            );
+        if !self
+            .keep_target_access(
+                transaction,
+                &provider,
+                &scope,
+                description,
+                "before-environment",
+            )
+            .await?
+        {
             return Ok(target_access_denied_result(
                 &provider,
                 &scope,
@@ -352,14 +359,16 @@ impl Invoker {
             merge_environment(&mut persistent_env, vec![(env.clone(), profile.clone())]);
         }
 
-        if !self.target_access_is_active(&provider, &scope)? {
-            transaction.event(
-                "target-access-lost",
-                &audit::detail(
-                    scope.target.as_deref().unwrap_or("-"),
-                    "after-authentication",
-                ),
-            );
+        if !self
+            .keep_target_access(
+                transaction,
+                &provider,
+                &scope,
+                description,
+                "after-authentication",
+            )
+            .await?
+        {
             return Ok(target_access_denied_result(
                 &provider,
                 &scope,
@@ -370,23 +379,44 @@ impl Invoker {
         prefix.extend(scope.target_args.iter().cloned());
         let running = if let Some(target) = &scope.target {
             let known = target_access::known_targets(&provider)?;
-            target_access::run_if_active(
-                &provider.paths.target_authorizations(),
-                &provider.paths.target_authorizations_lock(),
-                &known,
-                target,
-                || {
-                    exec::spawn_command_with_removed_env(
-                        &provider.config.command,
-                        &prefix,
-                        args,
-                        &persistent_env,
-                        &auth_env,
-                        &removed_env,
-                        self.settings.max_output_bytes,
-                    )
-                },
-            )?
+            let launch = || {
+                target_access::run_if_active(
+                    &provider.paths.target_authorizations(),
+                    &provider.paths.target_authorizations_lock(),
+                    &known,
+                    target,
+                    || {
+                        exec::spawn_command_with_removed_env(
+                            &provider.config.command,
+                            &prefix,
+                            args,
+                            &persistent_env,
+                            &auth_env,
+                            &removed_env,
+                            self.settings.max_output_bytes,
+                        )
+                    },
+                )
+            };
+            // The lease may run out between the last check and the launch lock.
+            // Ask once more instead of failing first and prompting on the next call.
+            match launch()? {
+                Some(running) => Some(running),
+                None if self
+                    .keep_target_access(transaction, &provider, &scope, description, "at-launch")
+                    .await? =>
+                {
+                    let running = launch()?;
+                    if running.is_none() {
+                        transaction.event(
+                            "target-access-lost",
+                            &audit::detail(target, "at-launch-after-renewal"),
+                        );
+                    }
+                    running
+                }
+                None => None,
+            }
         } else {
             Some(exec::spawn_command_with_removed_env(
                 &provider.config.command,
@@ -399,10 +429,6 @@ impl Invoker {
             )?)
         };
         let Some(running) = running else {
-            transaction.event(
-                "target-access-lost",
-                &audit::detail(scope.target.as_deref().unwrap_or("-"), "at-launch"),
-            );
             return Ok(target_access_denied_result(
                 &provider,
                 &scope,
@@ -527,21 +553,40 @@ impl Invoker {
         }
     }
 
-    fn target_access_is_active(
+    /// Re-check the lease of a call already under way. A lease that only ran out
+    /// while the call waited (a prompt, authentication) goes back to the human
+    /// before anything is refused: in a batch of calls, the one caught mid-flight
+    /// must not fail while the next one opens the renewal window. A lease a human
+    /// took away (`target clear`, removal, replacing activation) still stops it.
+    async fn keep_target_access(
         &self,
+        transaction: &audit::Transaction,
         provider: &Provider,
         scope: &InvocationScope,
+        description: Option<&str>,
+        stage: &str,
     ) -> Result<bool> {
         let Some(target_name) = scope.target.as_deref() else {
             return Ok(true);
         };
         let known = target_access::known_targets(provider)?;
-        target_access::is_active(
+        match target_access::lease_state(
             &provider.paths.target_authorizations(),
             &known,
             target_name,
             audit::now_epoch(),
-        )
+        )? {
+            LeaseState::Active => Ok(true),
+            LeaseState::Lapsed => {
+                transaction.event("target-access-expired", &audit::detail(target_name, stage));
+                self.ensure_target_access(transaction, provider, scope, description)
+                    .await
+            }
+            LeaseState::Absent => {
+                transaction.event("target-access-lost", &audit::detail(target_name, stage));
+                Ok(false)
+            }
+        }
     }
 
     #[allow(clippy::too_many_arguments)]

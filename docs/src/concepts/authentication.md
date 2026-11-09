@@ -6,7 +6,7 @@ Autenticação é um lifecycle separado do Jasper. Todo target autentica pelo pr
 
 Em qualquer tool target-aware, o alias precisa primeiro de um lease humano válido. Esse lease é separado de credenciais, cache e grants de operação: ele apenas permite que o dispatcher comece a usar o binding daquele target. Sem lease, o Torii não lê `.env`, cache ou credenciais e não inicia validator, STS ou processo filho.
 
-O lease expira independentemente da sessão. Ele é reavaliado depois da autorização Jasper, antes da sessão e novamente antes do launch. Portanto, remover o lease bloqueia trabalho pendente, mas não apaga credenciais nem interrompe um comando que já começou.
+O lease expira independentemente da sessão. Ele é reavaliado depois da autorização Jasper, antes da sessão e novamente antes do launch. Portanto, remover o lease (`target clear`, remoção do alias, ativação que substitui) bloqueia trabalho pendente, mas não apaga credenciais nem interrompe um comando que já começou. Se o lease apenas venceu por tempo enquanto a chamada esperava (a janela da operação, a autenticação), o Torii reabre o pedido de lease antes de recusar: num lote de chamadas, a que estava no meio do caminho não falha enquanto a seguinte abre a renovação. Uma vez renovado, o lote inteiro segue com essa única janela; a chamada só é negada se o humano negar.
 
 ## `environment`
 

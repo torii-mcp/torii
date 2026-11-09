@@ -286,7 +286,7 @@ fn how(record: &CallRecord) -> String {
         "explicit-deny" => "deny rule",
         "forbidden-arg" => "forbidden argument",
         "target-inactive" => "target not authorized",
-        "target-access-lost" => "target lease lost",
+        "target-access-lost" => "target lease revoked",
         other => other,
     }
     .to_owned()

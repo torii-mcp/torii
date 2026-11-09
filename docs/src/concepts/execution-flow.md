@@ -41,7 +41,7 @@ Esse feedback visual não muda a ordem de segurança: deny explícito nunca abre
 
 ## 3. Ambiente e sessão
 
-Depois da decisão da operação, o Torii relê o lease. Somente se ele ainda for válido lê o `.env` compartilhado e, quando houver, o `.env` do target. Em seguida, o lifecycle garante uma sessão válida no escopo. Para `aws_profile`, o Torii aplica o profile fixado, remove overrides AWS herdados e consulta STS; conta divergente encerra antes do comando pedido.
+Depois da decisão da operação, o Torii relê o lease. Se ele foi removido por um humano, a chamada para ali; se apenas venceu enquanto a janela da operação estava aberta, o pedido de lease reabre e a chamada só segue se o humano renovar. Somente com o lease válido lê o `.env` compartilhado e, quando houver, o `.env` do target. Em seguida, o lifecycle garante uma sessão válida no escopo. Para `aws_profile`, o Torii aplica o profile fixado, remove overrides AWS herdados e consulta STS; conta divergente encerra antes do comando pedido.
 
 ## 4. Runner
 
@@ -56,7 +56,7 @@ Command::new(provider.command)
     .envs(auth_env);
 ```
 
-Antes do launch, o lease é conferido uma última vez. Stdin do filho é nulo. Stdout e stderr são capturados. Um processo encerrado sem exit code recebe o fallback `143`. Um `target clear` posterior não mata esse processo, mas impede launches que ainda não passaram por essa conferência.
+Antes do launch, o lease é conferido uma última vez, com a mesma regra: vencido por tempo pede renovação, removido nega. Stdin do filho é nulo. Stdout e stderr são capturados. Um processo encerrado sem exit code recebe o fallback `143`. Um `target clear` posterior não mata esse processo, mas impede launches que ainda não passaram por essa conferência.
 
 ## 5. Resultado
 

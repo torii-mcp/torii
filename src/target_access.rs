@@ -132,12 +132,50 @@ struct AuthorizationFile {
     authorizations: Vec<TargetAuthorization>,
 }
 
-pub fn load(path: &Path, known_targets: &[KnownTarget], now: u64) -> Result<AuthorizationSnapshot> {
+/// Where a target's lease stands at one instant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LeaseState {
+    Active,
+    /// Time ran out: the entry is still on disk with the same binding. Nobody
+    /// took it away, so asking the human again is the right answer.
+    Lapsed,
+    /// No entry for this binding: never granted, or a human removed it
+    /// (`target clear`, removal, a replacing activation). Pending work stops.
+    Absent,
+}
+
+pub fn lease_state(
+    path: &Path,
+    known_targets: &[KnownTarget],
+    target: &str,
+    now: u64,
+) -> Result<LeaseState> {
+    let Some(state) = read_state(path)? else {
+        return Ok(LeaseState::Absent);
+    };
+    let Some(binding) = known_targets
+        .iter()
+        .find(|known| known.target == target)
+        .map(|known| known.binding.as_str())
+    else {
+        return Ok(LeaseState::Absent);
+    };
+    Ok(
+        match state
+            .authorizations
+            .iter()
+            .find(|entry| entry.target == target && entry.binding == binding)
+        {
+            Some(entry) if entry.expires_at > now => LeaseState::Active,
+            Some(_) => LeaseState::Lapsed,
+            None => LeaseState::Absent,
+        },
+    )
+}
+
+fn read_state(path: &Path) -> Result<Option<AuthorizationFile>> {
     if !path.exists() {
-        return Ok(AuthorizationSnapshot {
-            revision: StateRevision(None),
-            active: Vec::new(),
-        });
+        return Ok(None);
     }
     let contents = std::fs::read_to_string(path).map_err(|source| Error::Read {
         path: path.to_path_buf(),
@@ -154,10 +192,19 @@ pub fn load(path: &Path, known_targets: &[KnownTarget], now: u64) -> Result<Auth
             format!("unsupported version {:?}", state.version),
         ));
     }
-
     if state.revision.trim().is_empty() {
         return Err(invalid_state(path, "revision cannot be empty".into()));
     }
+    Ok(Some(state))
+}
+
+pub fn load(path: &Path, known_targets: &[KnownTarget], now: u64) -> Result<AuthorizationSnapshot> {
+    let Some(state) = read_state(path)? else {
+        return Ok(AuthorizationSnapshot {
+            revision: StateRevision(None),
+            active: Vec::new(),
+        });
+    };
     let known = known_targets
         .iter()
         .map(|target| (target.target.as_str(), target.binding.as_str()))
@@ -654,6 +701,67 @@ mod tests {
         .unwrap();
         revoke(&path, &lock, &known(), "dev", 101).unwrap();
         assert!(load(&path, &known(), 102).unwrap().active.is_empty());
+    }
+
+    /// Só o lease que venceu por tempo pede de novo; o que um humano tirou some do
+    /// arquivo e continua barrando o trabalho pendente.
+    #[test]
+    fn a_lapsed_lease_is_told_apart_from_one_a_human_removed() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let (path, lock) = paths(&temp);
+        assert_eq!(
+            lease_state(&path, &known(), "dev", 100).unwrap(),
+            LeaseState::Absent
+        );
+        activate(
+            &path,
+            &lock,
+            &known(),
+            "dev",
+            100,
+            1,
+            ActivationMode::Replace,
+        )
+        .unwrap();
+        assert_eq!(
+            lease_state(&path, &known(), "dev", 159).unwrap(),
+            LeaseState::Active
+        );
+        assert_eq!(
+            lease_state(&path, &known(), "dev", 160).unwrap(),
+            LeaseState::Lapsed
+        );
+
+        let changed = vec![KnownTarget {
+            target: "dev".into(),
+            binding: "different-binding".into(),
+        }];
+        assert_eq!(
+            lease_state(&path, &changed, "dev", 160).unwrap(),
+            LeaseState::Absent
+        );
+
+        revoke(&path, &lock, &known(), "dev", 160).unwrap();
+        assert_eq!(
+            lease_state(&path, &known(), "dev", 160).unwrap(),
+            LeaseState::Absent
+        );
+
+        activate(
+            &path,
+            &lock,
+            &known(),
+            "dev",
+            100,
+            1,
+            ActivationMode::Replace,
+        )
+        .unwrap();
+        clear(&path, &lock).unwrap();
+        assert_eq!(
+            lease_state(&path, &known(), "dev", 160).unwrap(),
+            LeaseState::Absent
+        );
     }
 
     #[test]

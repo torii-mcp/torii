@@ -124,7 +124,7 @@ O antigo `torii.log` em texto não é mais escrito. Um arquivo que já exista na
 | `policy-write-failed` | o gesto permanente não chegou ao disco; a chamada seguiu só o gesto |
 | `invalid-accept` / `invalid-rule` | accept abaixo da largura mínima, ignorado; regra que não compila |
 | `legacy-grants-ignored` / `invalid-grants-ignored` | arquivo de grants antigo ou corrompido; pede reaprovação |
-| `target-access-requested` / `-denied` / `-replaced` / `-added` / `-stale` / `-lost` / `-revoked` / `-cleared` | o ciclo do lease de target |
+| `target-access-requested` / `-denied` / `-replaced` / `-added` / `-stale` / `-expired` / `-lost` / `-revoked` / `-cleared` | o ciclo do lease de target; `-expired` marca o lease que venceu no meio da chamada e voltou ao humano, `-lost` o que foi removido e barrou a chamada |
 | `preflight-provider` / `preflight-ok` / `preflight-failed` | autenticação pelo provider de identidade |
 | `session-ok` / `session-unchecked` / `session-invalid` / `session-refreshed` / `reauth-forced` | estado da sessão do escopo de credencial |
 | `session-candidate-invalid` | uma tentativa recusada na janela de autenticação, uma por tentativa, com o motivo dado pelo validador (por exemplo, `ExpiredToken` ou falha de certificado) |
