@@ -32,6 +32,12 @@ struct ToolArguments {
 /// Longest description, in characters, the agent may attach to a call.
 const MAX_DESCRIPTION_CHARS: usize = 500;
 
+/// Policy rules, grants and the human's approvals all match argv by token prefix.
+/// An agent left alone writes the target first and the mode last
+/// (`apply -k <dir> --dry-run=server`), and then no approval covers more than
+/// one call. Said here because this is the text the agent reads while building it.
+const ARGS_SCHEMA_TEXT: &str = "The provider argv as separate strings, without the executable name. Order it from the most generic token to the most specific: first the command and subcommand, then the flags that set the mode and risk of the call (dry-run, namespace, region, output format), and the target of the action last (file, directory, -k/-f path, resource name or ID). Keep each flag next to its value. Torii matches policy rules and human approvals by token prefix, so a generic head lets one approval cover a whole family of calls, while a specific value early in the argv makes the human approve every call one by one. Right: [\"apply\", \"--dry-run=server\", \"-k\", \"overlays/prd\"], [\"get\", \"pods\", \"-n\", \"payments\", \"-o\", \"wide\"], [\"s3\", \"ls\", \"--region\", \"sa-east-1\", \"s3://reports\"]. Wrong: [\"apply\", \"-k\", \"overlays/prd\", \"--dry-run=server\"]. Move a flag only where the CLI accepts it in any position with the same meaning; keep positional arguments where the CLI requires them.";
+
 const DESCRIPTION_SCHEMA_TEXT: &str = "Why this call is being made, shown to the human at the top of the approval window. Always fill it in: name the project or repository, what you intend to learn or change, and, when the call is part of a plan, which step it is (for example: \"projeto billing-api: passo 1 de 3, conferir se o namespace payments já existe no cluster\"). Plain text, at most 500 characters. It is displayed as unverified agent text and never changes the policy decision.";
 
 #[derive(Debug, Deserialize)]
@@ -133,7 +139,7 @@ impl ServerHandler for ToriiServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(rmcp::model::Implementation::new("torii", env!("CARGO_PKG_VERSION")))
-            .with_instructions("Use Torii MCP tools for installed provider CLIs; never invoke those provider executables directly through a shell or try to bypass a denial. Before choosing an operation, call torii_policy with the provider tool and, when required, its announced target to inspect accept and deny rules. Pass argv as an array of strings, and always add a short description saying which project the call serves, why it is needed, and which step of your plan it is (for example \"step 1 of 3\"); the human reads it in the approval window. For target-aware tools, choose only a target announced by the schema. An announced alias is configured, not necessarily authorized: Torii asks the human before an inactive target can be used. If target access is denied, do not retry with a different alias. Multiple aliases may be temporarily active only when the human explicitly allows that. Policy is default-deny and explicit deny always wins. In target-aware tools it is layered: the shared provider denies apply in every target and cannot be lifted there, while a target's own accepts replace the shared ones, so read the policy for the target you intend to use. For an allowed call with managed authentication, Torii asks the human to authenticate automatically when the session is unavailable. There is no MCP reauth or target-management tool: a human uses the Torii control-plane CLI outside MCP. An aws_profile target is different: if its configured AWS CLI profile is unavailable or the active account does not match, ask a human to authenticate that configured profile through the native AWS CLI flow and retry; never choose a different alias or profile yourself.")
+            .with_instructions("Use Torii MCP tools for installed provider CLIs; never invoke those provider executables directly through a shell or try to bypass a denial. Before choosing an operation, call torii_policy with the provider tool and, when required, its announced target to inspect accept and deny rules. Pass argv as an array of strings ordered from the most generic token to the most specific: command and subcommand first, then flags that set the mode and risk (such as --dry-run=server, -n, --region, -o), and the target of the action last (a -k/-f path, file, resource name or ID), keeping each flag next to its value; approvals match by token prefix, so [\"apply\", \"--dry-run=server\", \"-k\", \"<dir>\"] lets the human approve every server dry-run at once, while [\"apply\", \"-k\", \"<dir>\", \"--dry-run=server\"] must be approved call by call. Reorder only where the CLI accepts the flag in any position with the same meaning. Always add a short description saying which project the call serves, why it is needed, and which step of your plan it is (for example \"step 1 of 3\"); the human reads it in the approval window. For target-aware tools, choose only a target announced by the schema. An announced alias is configured, not necessarily authorized: Torii asks the human before an inactive target can be used. If target access is denied, do not retry with a different alias. Multiple aliases may be temporarily active only when the human explicitly allows that. Policy is default-deny and explicit deny always wins. In target-aware tools it is layered: the shared provider denies apply in every target and cannot be lifted there, while a target's own accepts replace the shared ones, so read the policy for the target you intend to use. For an allowed call with managed authentication, Torii asks the human to authenticate automatically when the session is unavailable. There is no MCP reauth or target-management tool: a human uses the Torii control-plane CLI outside MCP. An aws_profile target is different: if its configured AWS CLI profile is unavailable or the active account does not match, ask a human to authenticate that configured profile through the native AWS CLI flow and retry; never choose a different alias or profile yourself.")
     }
 
     async fn list_tools(
@@ -251,7 +257,12 @@ fn tool_schema(provider: &crate::providers::Provider) -> Map<String, Value> {
     let mut properties = Map::new();
     properties.insert(
         "args".into(),
-        json!({ "type": "array", "items": { "type": "string" }, "minItems": 1 }),
+        json!({
+            "type": "array",
+            "items": { "type": "string" },
+            "minItems": 1,
+            "description": ARGS_SCHEMA_TEXT
+        }),
     );
     properties.insert(
         "description".into(),
@@ -384,6 +395,13 @@ auth:
         assert_eq!(schema["required"], json!(["target", "args"]));
         assert_eq!(schema["properties"]["description"]["type"], "string");
         assert_eq!(schema["properties"]["target"]["enum"], json!(["mpce_dev"]));
+        // A ordem do argv é ensinada onde o agente monta a chamada: aprovação por
+        // prefixo só cobre uma família se o genérico vier na frente.
+        let args_text = schema["properties"]["args"]["description"]
+            .as_str()
+            .unwrap();
+        assert!(args_text.contains("most generic token to the most specific"));
+        assert!(args_text.contains(r#"["apply", "--dry-run=server", "-k", "overlays/prd"]"#));
 
         let server = ToriiServer::new(Invoker::new(paths, Settings::default(), registry));
         let policy = server

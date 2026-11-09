@@ -33,7 +33,7 @@ Uma tool como `aws` exige apenas o vetor de argumentos e aceita uma descrição 
   "type": "object",
   "required": ["args"],
   "properties": {
-    "args": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+    "args": { "type": "array", "items": { "type": "string" }, "minItems": 1, "description": "…" },
     "description": { "type": "string", "maxLength": 500 }
   },
   "additionalProperties": false
@@ -52,6 +52,19 @@ Chamada:
 }
 ```
 
+## Ordem dos argumentos
+
+A descrição de `args` no schema e as instruções do servidor pedem ao agente que ordene o argv do mais genérico para o mais específico: comando e subcomando, depois as flags que definem o modo e o risco da chamada (`--dry-run=server`, `-n`, `--region`, `-o`), e por último o alvo da ação (caminho de `-k`/`-f`, arquivo, nome ou ID do recurso), sempre com cada flag junto do seu valor.
+
+O motivo é o matching por prefixo de tokens. Regras, grants e o editor de escopo da janela olham o argv da esquerda para a direita, então um valor específico no meio corta o prefixo:
+
+| argv | o que o humano consegue aprovar de uma vez |
+| --- | --- |
+| `apply --dry-run=server -k overlays/prd` | `apply --dry-run=server`: todo dry-run de servidor, de qualquer overlay |
+| `apply -k overlays/prd --dry-run=server` | só `apply -k overlays/prd …`, chamada por chamada para cada overlay |
+
+O agente só deve mover uma flag quando a CLI a aceita em qualquer posição com o mesmo significado; argumentos posicionais ficam onde a CLI exige. Isto é orientação ao agente, não validação: o Torii não reordena nem recusa um argv fora dessa ordem.
+
 ## Descrição da chamada
 
 `description` é o motivo da chamada nas palavras do agente: qual projeto ela atende, o que ele quer descobrir ou mudar e, quando faz parte de um plano, qual passo é ("passo 1 de 10"). O schema e as instruções do servidor pedem que o agente sempre a preencha. Ela aparece no topo da janela de autorização da operação e da janela de lease de target, num quadro rotulado **Motivo informado pelo agente · não verificado**; sem ela, o quadro diz que o agente não informou o motivo.
@@ -68,7 +81,7 @@ Uma tool como `kubectl` ou `aws_profile` exige também `target`. O enum é const
   "required": ["target", "args"],
   "properties": {
     "target": { "type": "string", "enum": ["mpce_dev"] },
-    "args": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+    "args": { "type": "array", "items": { "type": "string" }, "minItems": 1, "description": "…" },
     "description": { "type": "string", "maxLength": 500 }
   },
   "additionalProperties": false
